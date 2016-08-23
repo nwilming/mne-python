@@ -673,7 +673,7 @@ def _fit_dipole(min_dist_to_inner_skull, B_orig, t, guess_rrs,
     B2 = np.dot(B, B)
     if B2 == 0:
         warn('Zero field found for time %s' % t)
-        return np.zeros(3), 0, np.zeros(3), 0
+        return np.zeros(3), 0, np.zeros(3), 0, B
 
     idx = np.argmin([_fit_eval(guess_rrs[[fi], :], B, B2, fwd_svd)
                      for fi, fwd_svd in enumerate(guess_data['fwd_svd'])])
@@ -743,8 +743,8 @@ def fit_dipole(evoked, cov, bem, trans=None, min_dist=5., n_jobs=1,
         The dataset to fit.
     cov : str | instance of Covariance
         The noise covariance.
-    bem : str | dict
-        The BEM filename (str) or a loaded sphere model (dict).
+    bem : str | instance of ConductorModel
+        The BEM filename (str) or conductor model.
     trans : str | None
         The head<->MRI transform filename. Must be provided unless BEM
         is a sphere model.
@@ -818,15 +818,19 @@ def fit_dipole(evoked, cov, bem, trans=None, min_dist=5., n_jobs=1,
     del min_dist
 
     # Figure out our inputs
-    neeg = len(pick_types(info, meg=False, eeg=True, exclude=[]))
+    neeg = len(pick_types(info, meg=False, eeg=True, ref_meg=False,
+                          exclude=[]))
     if isinstance(bem, string_types):
-        logger.info('BEM               : %s' % bem)
+        bem_extra = bem
+    else:
+        bem_extra = repr(bem)
+        logger.info('BEM               : %s' % bem_extra)
     if trans is not None:
         logger.info('MRI transform     : %s' % trans)
         mri_head_t, trans = _get_trans(trans)
     else:
         mri_head_t = Transform('head', 'mri', np.eye(4))
-    bem = _setup_bem(bem, bem, neeg, mri_head_t, verbose=False)
+    bem = _setup_bem(bem, bem_extra, neeg, mri_head_t, verbose=False)
     if not bem['is_sphere']:
         if trans is None:
             raise ValueError('mri must not be None if BEM is provided')
@@ -932,7 +936,7 @@ def fit_dipole(evoked, cov, bem, trans=None, min_dist=5., n_jobs=1,
 
     # Whitener for the data
     logger.info('Decomposing the sensor noise covariance matrix...')
-    picks = pick_types(info, meg=True, eeg=True)
+    picks = pick_types(info, meg=True, eeg=True, ref_meg=False)
 
     # In case we want to more closely match MNE-C for debugging:
     # from .io.pick import pick_info
@@ -1032,3 +1036,63 @@ def fit_dipole(evoked, cov, bem, trans=None, min_dist=5., n_jobs=1,
     residual = out[4]
     logger.info('%d time points fitted' % len(dipoles.times))
     return dipoles, residual
+
+
+def get_phantom_dipoles(kind='elekta'):
+    """Get standard phantom dipole locations and orientations
+
+    Parameters
+    ----------
+    kind : str
+        Get the information for the given system.
+
+            ``vectorview`` (default)
+              The Neuromag VectorView phantom.
+
+            ``122``
+              The Neuromag-122 phantom. This has the same dipoles
+              as the VectorView phantom, but in a different order.
+
+    Returns
+    -------
+    pos : ndarray, shape (n_dipoles, 3)
+        The dipole positions.
+    ori : ndarray, shape (n_dipoles, 3)
+        The dipole orientations.
+    """
+    _valid_types = ('122', 'vectorview')
+    if not isinstance(kind, string_types) or kind not in _valid_types:
+        raise ValueError('kind must be one of %s, got %s'
+                         % (_valid_types, kind,))
+    if kind in ('122', 'vectorview'):
+        a = np.array([59.7, 48.6, 35.8, 24.8, 37.2, 27.5, 15.8, 7.9])
+        b = np.array([46.1, 41.9, 38.3, 31.5, 13.9, 16.2, 20, 19.3])
+        x = np.concatenate((a, [0] * 8, -b, [0] * 8))
+        y = np.concatenate(([0] * 8, -a, [0] * 8, b))
+        c = [22.9, 23.5, 25.5, 23.1, 52, 46.4, 41, 33]
+        d = [44.4, 34, 21.6, 12.7, 62.4, 51.5, 39.1, 27.9]
+        z = np.concatenate((c, c, d, d))
+        pos = np.vstack((x, y, z)).T / 1000.
+        if kind == 122:
+            reorder = (list(range(8, 16)) + list(range(0, 8)) +
+                       list(range(24, 32) + list(range(16, 24))))
+            pos = pos[reorder]
+        # Locs are always in XZ or YZ, and so are the oris. The oris are
+        # also in the same plane and tangential, so it's easy to determine
+        # the orientation.
+        ori = list()
+        for this_pos in pos:
+            this_ori = np.zeros(3)
+            idx = np.where(this_pos == 0)[0]
+            # assert len(idx) == 1
+            idx = np.setdiff1d(np.arange(3), idx[0])
+            this_ori[idx] = (this_pos[idx][::-1] /
+                             np.linalg.norm(this_pos[idx])) * [1, -1]
+            # Now we have this quality, which we could uncomment to
+            # double-check:
+            # np.testing.assert_allclose(np.dot(this_ori, this_pos) /
+            #                            np.linalg.norm(this_pos), 0,
+            #                            atol=1e-15)
+            ori.append(this_ori)
+        ori = np.array(ori)
+    return pos, ori

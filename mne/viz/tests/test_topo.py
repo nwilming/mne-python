@@ -54,9 +54,9 @@ def _get_epochs():
     raw = _get_raw()
     events = _get_events()
     picks = _get_picks(raw)
-    with warnings.catch_warnings(record=True):  # bad proj
-        epochs = Epochs(raw, events[:10], event_id, tmin, tmax, picks=picks,
-                        baseline=(None, 0), verbose='error')
+    # bad proj warning
+    epochs = Epochs(raw, events[:10], event_id, tmin, tmax, picks=picks,
+                    baseline=(None, 0), verbose='error')
     return epochs
 
 
@@ -77,10 +77,15 @@ def test_plot_topo():
     import matplotlib.pyplot as plt
     # Show topography
     evoked = _get_epochs().average()
-    plot_evoked_topo(evoked)  # should auto-find layout
+    # should auto-find layout
+    plot_evoked_topo([evoked, evoked], merge_grads=True)
     # Test jointplot
     evoked.plot_joint()
-    evoked.plot_joint(title='test', ts_args=dict(spatial_colors=True),
+
+    def return_inds(d):  # to test function kwarg to zorder arg of evoked.plot
+        return list(range(d.shape[0]))
+    ts_args = dict(spatial_colors=True, zorder=return_inds)
+    evoked.plot_joint(title='test', ts_args=ts_args,
                       topomap_args=dict(colorbar=True, times=[0.]))
 
     warnings.simplefilter('always', UserWarning)

@@ -19,7 +19,8 @@ import matplotlib
 
 from mne import (Epochs, Annotations, read_events, pick_events, read_epochs,
                  equalize_channels, pick_types, pick_channels, read_evokeds,
-                 write_evokeds, create_info, make_fixed_length_events)
+                 write_evokeds, create_info, make_fixed_length_events,
+                 combine_evoked)
 from mne.baseline import rescale
 from mne.preprocessing import maxwell_filter
 from mne.epochs import (
@@ -165,9 +166,6 @@ def test_average_movements():
     assert_raises(TypeError, average_movements, 'foo', head_pos=head_pos)
     assert_raises(RuntimeError, average_movements, epochs_proj,
                   head_pos=head_pos)  # prj
-    epochs.info['comps'].append([0])
-    assert_raises(RuntimeError, average_movements, epochs, head_pos=head_pos)
-    epochs.info['comps'].pop()
 
 
 def test_reject():
@@ -278,9 +276,9 @@ def test_decim():
     """Test epochs decimation
     """
     # First with EpochsArray
-    n_epochs, n_channels, n_times = 5, 10, 20
     dec_1, dec_2 = 2, 3
     decim = dec_1 * dec_2
+    n_epochs, n_channels, n_times = 5, 10, 20
     sfreq = 1000.
     sfreq_new = sfreq / decim
     data = rng.randn(n_epochs, n_channels, n_times)
@@ -297,13 +295,33 @@ def test_decim():
 
     # Now let's do it with some real data
     raw, events, picks = _get_data()
+    events = events[events[:, 2] == 1][:2]
+    raw.load_data().pick_channels([raw.ch_names[pick] for pick in picks[::30]])
+    raw.info.normalize_proj()
+    del picks
     sfreq_new = raw.info['sfreq'] / decim
-    raw.info['lowpass'] = sfreq_new / 4.  # suppress aliasing warnings
-    epochs = Epochs(raw, events, event_id, tmin, tmax, picks=picks,
-                    preload=False)
+    raw.info['lowpass'] = sfreq_new / 12.  # suppress aliasing warnings
     assert_raises(ValueError, epochs.decimate, -1)
     assert_raises(ValueError, epochs.decimate, 2, offset=-1)
     assert_raises(ValueError, epochs.decimate, 2, offset=2)
+    for this_offset in range(decim):
+        epochs = Epochs(raw, events, event_id,
+                        tmin=-this_offset / raw.info['sfreq'],
+                        tmax=tmax, preload=False)
+        idx_offsets = np.arange(decim) + this_offset
+        for offset, idx_offset in zip(np.arange(decim), idx_offsets):
+            expected_times = epochs.times[idx_offset::decim]
+            expected_data = epochs.get_data()[:, :, idx_offset::decim]
+            must_have = offset / float(epochs.info['sfreq'])
+            assert_true(np.isclose(must_have, expected_times).any())
+            ep_decim = epochs.copy().decimate(decim, offset)
+            assert_true(np.isclose(must_have, ep_decim.times).any())
+            assert_allclose(ep_decim.times, expected_times)
+            assert_allclose(ep_decim.get_data(), expected_data)
+            assert_equal(ep_decim.info['sfreq'], sfreq_new)
+
+    # More complex cases
+    epochs = Epochs(raw, events, event_id, tmin, tmax, preload=False)
     expected_data = epochs.get_data()[:, :, ::decim]
     expected_times = epochs.times[::decim]
     for preload in (True, False):
@@ -816,11 +834,11 @@ def test_evoked_arithmetic():
     epochs = Epochs(raw, events[:8], event_id, tmin, tmax, picks=picks,
                     baseline=(None, 0))
     evoked = epochs.average()
-    evoked_sum = evoked1 + evoked2
+    evoked_sum = combine_evoked([evoked1, evoked2], weights='nave')
     assert_array_equal(evoked.data, evoked_sum.data)
     assert_array_equal(evoked.times, evoked_sum.times)
-    assert_true(evoked_sum.nave == (evoked1.nave + evoked2.nave))
-    evoked_diff = evoked1 - evoked1
+    assert_equal(evoked_sum.nave, evoked1.nave + evoked2.nave)
+    evoked_diff = combine_evoked([evoked1, evoked1], weights=[1, -1])
     assert_array_equal(np.zeros_like(evoked.data), evoked_diff.data)
 
 
@@ -1155,7 +1173,7 @@ def test_resample():
     assert_true(epochs_resampled is epochs)
 
     # test proper setting of times (#2645)
-    n_trial, n_chan, n_time, sfreq = 1, 1, 10, 1000
+    n_trial, n_chan, n_time, sfreq = 1, 1, 10, 1000.
     data = np.zeros((n_trial, n_chan, n_time))
     events = np.zeros((n_trial, 3), int)
     info = create_info(n_chan, sfreq, 'eeg')
@@ -1168,6 +1186,20 @@ def test_resample():
     for e in epochs1, epochs2, epochs:
         assert_equal(e.times[0], epochs.tmin)
         assert_equal(e.times[-1], epochs.tmax)
+    # test that cropping after resampling works (#3296)
+    this_tmin = -0.002
+    epochs = EpochsArray(data, deepcopy(info), events, tmin=this_tmin)
+    for times in (epochs.times, epochs._raw_times):
+        assert_allclose(times, np.arange(n_time) / sfreq + this_tmin)
+    epochs.resample(info['sfreq'] * 2.)
+    for times in (epochs.times, epochs._raw_times):
+        assert_allclose(times, np.arange(2 * n_time) / (sfreq * 2) + this_tmin)
+    epochs.crop(0, None)
+    for times in (epochs.times, epochs._raw_times):
+        assert_allclose(times, np.arange((n_time - 2) * 2) / (sfreq * 2))
+    epochs.resample(sfreq)
+    for times in (epochs.times, epochs._raw_times):
+        assert_allclose(times, np.arange(n_time - 2) / sfreq)
 
 
 def test_detrend():
@@ -1203,8 +1235,9 @@ def test_detrend():
         # There are non-M/EEG channels that should not be equal:
         assert_true(not np.allclose(a, b))
 
-    assert_raises(ValueError, Epochs, raw, events[:4], event_id, tmin, tmax,
-                  detrend=2)
+    for value in ['foo', 2, False, True]:
+        assert_raises(ValueError, Epochs, raw, events[:4], event_id,
+                      tmin, tmax, detrend=value)
 
 
 def test_bootstrap():
@@ -2030,6 +2063,18 @@ def test_concatenate_epochs():
     # check if baseline is same for all epochs
     epochs2.baseline = (-0.1, None)
     assert_raises(ValueError, concatenate_epochs, [epochs, epochs2])
+
+    # check if dev_head_t is same
+    epochs2 = epochs.copy()
+    concatenate_epochs([epochs, epochs2])  # should work
+    epochs2.info['dev_head_t']['trans'][:3, 3] += 0.0001
+    assert_raises(ValueError, concatenate_epochs, [epochs, epochs2])
+    assert_raises(TypeError, concatenate_epochs, 'foo')
+    assert_raises(TypeError, concatenate_epochs, [epochs, 'foo'])
+    epochs2.info['dev_head_t'] = None
+    assert_raises(ValueError, concatenate_epochs, [epochs, epochs2])
+    epochs.info['dev_head_t'] = None
+    concatenate_epochs([epochs, epochs2])  # should work
 
 
 def test_add_channels():

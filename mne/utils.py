@@ -59,9 +59,12 @@ def nottest(f):
     return f
 
 
+# # # WARNING # # #
 # This list must also be updated in doc/_templates/class.rst if it is
 # changed here!
-_doc_special_members = ('__contains__', '__getitem__', '__iter__', '__len__')
+_doc_special_members = ('__contains__', '__getitem__', '__iter__', '__len__',
+                        '__call__', '__add__', '__sub__', '__mul__', '__div__',
+                        '__neg__', '__hash__')
 
 ###############################################################################
 # RANDOM UTILITIES
@@ -145,6 +148,43 @@ def object_hash(x, h=None):
     else:
         raise RuntimeError('unsupported type: %s (%s)' % (type(x), x))
     return int(h.hexdigest(), 16)
+
+
+def object_size(x):
+    """Estimate the size of a reasonable python object
+
+    Parameters
+    ----------
+    x : object
+        Object to approximate the size of.
+        Can be anything comprised of nested versions of:
+        {dict, list, tuple, ndarray, str, bytes, float, int, None}.
+
+    Returns
+    -------
+    size : int
+        The estimated size in bytes of the object.
+    """
+    # Note: this will not process object arrays properly (since those only)
+    # hold references
+    if isinstance(x, (bytes, string_types, int, float, type(None))):
+        size = sys.getsizeof(x)
+    elif isinstance(x, np.ndarray):
+        # On newer versions of NumPy, just doing sys.getsizeof(x) works,
+        # but on older ones you always get something small :(
+        size = sys.getsizeof(np.array([])) + x.nbytes
+    elif isinstance(x, np.generic):
+        size = x.nbytes
+    elif isinstance(x, dict):
+        size = sys.getsizeof(x)
+        for key, value in x.items():
+            size += object_size(key)
+            size += object_size(value)
+    elif isinstance(x, (list, tuple)):
+        size = sys.getsizeof(x) + sum(object_size(xx) for xx in x)
+    else:
+        raise RuntimeError('unsupported type: %s (%s)' % (type(x), x))
+    return size
 
 
 def object_diff(a, b, pre=''):
@@ -299,13 +339,16 @@ def warn(message, category=RuntimeWarning):
             last_fname = fname
             continue
         # treat tests as scripts
-        if not fname.startswith(root_dir) or \
+        # and don't capture unittest/case.py (assert_raises)
+        if not (fname.startswith(root_dir) or
+                ('unittest' in fname and 'case' in fname)) or \
                 op.basename(op.dirname(fname)) == 'tests':
             stacklevel = fi + 1
             break
         last_fname = op.basename(fname)
     del stack
-    warnings.warn(message, category, stacklevel=stacklevel)
+    if logger.level <= logging.WARN:
+        warnings.warn(message, category, stacklevel=stacklevel)
     logger.warning(message)
 
 
@@ -467,6 +510,26 @@ def _reject_data_segments(data, reject, flat, decim, info, tstep):
                            'consider updating your rejection '
                            'thresholds.')
     return data, drop_inds
+
+
+def _get_inst_data(inst):
+    """get data from MNE object instance like Raw, Epochs or Evoked.
+    Returns a view, not a copy!"""
+    from .io.base import _BaseRaw
+    from .epochs import _BaseEpochs
+    from . import Evoked
+    from .time_frequency.tfr import _BaseTFR
+
+    if isinstance(inst, (_BaseRaw, _BaseEpochs)):
+        if not inst.preload:
+            inst.load_data()
+        return inst._data
+    elif isinstance(inst, (Evoked, _BaseTFR)):
+        return inst.data
+    else:
+        raise TypeError('The argument must be an instance of Raw, Epochs, '
+                        'Evoked, EpochsTFR or AverageTFR, got {0}.'.format(
+                            type(inst)))
 
 
 class _FormatDict(dict):
@@ -704,6 +767,22 @@ def requires_nibabel(vox2ras_tkr=False):
                                  'Requires nibabel%s' % extra)
 
 
+def buggy_mkl_svd(function):
+    """Decorator for tests that make calls to SVD and intermittently fail"""
+    @wraps(function)
+    def dec(*args, **kwargs):
+        try:
+            return function(*args, **kwargs)
+        except np.linalg.LinAlgError as exp:
+            if 'SVD did not converge' in str(exp):
+                from nose.plugins.skip import SkipTest
+                msg = 'Intel MKL SVD convergence error detected, skipping test'
+                warn(msg)
+                raise SkipTest(msg)
+            raise
+    return dec
+
+
 def requires_version(library, min_version):
     """Helper for testing"""
     return np.testing.dec.skipif(not check_version(library, min_version),
@@ -711,8 +790,9 @@ def requires_version(library, min_version):
                                  % (library, min_version))
 
 
-def requires_module(function, name, call):
+def requires_module(function, name, call=None):
     """Decorator to skip test if package is not available"""
+    call = ('import %s' % name) if call is None else call
     try:
         from nose.plugins.skip import SkipTest
     except ImportError:
@@ -730,6 +810,177 @@ def requires_module(function, name, call):
                            % (function.__name__, name))
         return function(*args, **kwargs)
     return dec
+
+
+def copy_doc(source):
+    """Decorator to copy the docstring from another function.
+
+    The docstring of the source function is prepepended to the docstring of the
+    function wrapped by this decorator.
+
+    This is useful when inheriting from a class and overloading a method. This
+    decorator can be used to copy the docstring of the original method.
+
+    Parameters
+    ----------
+    source : function
+        Function to copy the docstring from
+
+    Returns
+    -------
+    wrapper : function
+        The decorated function
+
+    Examples
+    --------
+    >>> class A:
+    ...     def m1():
+    ...         '''Docstring for m1'''
+    ...         pass
+    >>> class B (A):
+    ...     @copy_doc(A.m1)
+    ...     def m1():
+    ...         ''' this gets appended'''
+    ...         pass
+    >>> print(B.m1.__doc__)
+    Docstring for m1 this gets appended
+    """
+    def wrapper(func):
+        if source.__doc__ is None or len(source.__doc__) == 0:
+            raise ValueError('Cannot copy docstring: docstring was empty.')
+        doc = source.__doc__
+        if func.__doc__ is not None:
+            doc += func.__doc__
+        func.__doc__ = doc
+        return func
+    return wrapper
+
+
+def copy_function_doc_to_method_doc(source):
+    """Use the docstring from a function as docstring for a method.
+
+    The docstring of the source function is prepepended to the docstring of the
+    function wrapped by this decorator. Additionally, the first parameter
+    specified in the docstring of the source function is removed in the new
+    docstring.
+
+    This decorator is useful when implementing a method that just calls a
+    function.  This pattern is prevalent in for example the plotting functions
+    of MNE.
+
+    Parameters
+    ----------
+    source : function
+        Function to copy the docstring from
+
+    Returns
+    -------
+    wrapper : function
+        The decorated method
+
+    Examples
+    --------
+    >>> def plot_function(object, a, b):
+    ...     '''Docstring for plotting function.
+    ...
+    ...     Parameters
+    ...     ----------
+    ...     object : instance of object
+    ...         The object to plot
+    ...     a : int
+    ...         Some parameter
+    ...     b : int
+    ...         Some parameter
+    ...     '''
+    ...     pass
+    ...
+    >>> class A:
+    ...     @copy_function_doc_to_method_doc(plot_function)
+    ...     def plot(self, a, b):
+    ...         '''
+    ...         Notes
+    ...         -----
+    ...         .. versionadded:: 0.13.0
+    ...         '''
+    ...         plot_function(self, a, b)
+    >>> print(A.plot.__doc__)
+    Docstring for plotting function.
+    <BLANKLINE>
+        Parameters
+        ----------
+        a : int
+            Some parameter
+        b : int
+            Some parameter
+    <BLANKLINE>
+            Notes
+            -----
+            .. versionadded:: 0.13.0
+    <BLANKLINE>
+
+    Notes
+    -----
+    The parsing performed is very basic and will break easily on docstrings
+    that are not formatted exactly according to the ``numpydoc`` standard.
+    Always inspect the resulting docstring when using this decorator.
+    """
+    def wrapper(func):
+        doc = source.__doc__.split('\n')
+
+        # Find parameter block
+        for line, text in enumerate(doc[:-2]):
+            if (text.strip() == 'Parameters' and
+                    doc[line + 1].strip() == '----------'):
+                parameter_block = line
+                break
+        else:
+            # No parameter block found
+            raise ValueError('Cannot copy function docstring: no parameter '
+                             'block found. To simply copy the docstring, use '
+                             'the @copy_doc decorator instead.')
+
+        # Find first parameter
+        for line, text in enumerate(doc[parameter_block:], parameter_block):
+            if ':' in text:
+                first_parameter = line
+                parameter_indentation = len(text) - len(text.lstrip(' '))
+                break
+        else:
+            raise ValueError('Cannot copy function docstring: no parameters '
+                             'found. To simply copy the docstring, use the '
+                             '@copy_doc decorator instead.')
+
+        # Find end of first parameter
+        for line, text in enumerate(doc[first_parameter + 1:],
+                                    first_parameter + 1):
+            # Ignore empty lines
+            if len(text.strip()) == 0:
+                continue
+
+            line_indentation = len(text) - len(text.lstrip(' '))
+            if line_indentation <= parameter_indentation:
+                # Reach end of first parameter
+                first_parameter_end = line
+
+                # Of only one parameter is defined, remove the Parameters
+                # heading as well
+                if ':' not in text:
+                    first_parameter = parameter_block
+
+                break
+        else:
+            # End of docstring reached
+            first_parameter_end = line
+            first_parameter = parameter_block
+
+        # Copy the docstring, but remove the first parameter
+        doc = ('\n'.join(doc[:first_parameter]) + '\n' +
+               '\n'.join(doc[first_parameter_end:]))
+        if func.__doc__ is not None:
+            doc += func.__doc__
+        func.__doc__ = doc
+        return func
+    return wrapper
 
 
 _pandas_call = """
@@ -795,10 +1046,8 @@ requires_fs_or_nibabel = partial(requires_module, name='nibabel or Freesurfer',
 
 requires_tvtk = partial(requires_module, name='TVTK',
                         call='from tvtk.api import tvtk')
-requires_statsmodels = partial(requires_module, name='statsmodels',
-                               call='import statsmodels')
-requires_patsy = partial(requires_module, name='patsy',
-                         call='import patsy')
+requires_statsmodels = partial(requires_module, name='statsmodels')
+requires_patsy = partial(requires_module, name='patsy')
 requires_pysurfer = partial(requires_module, name='PySurfer',
                             call='from surfer import Brain')
 requires_PIL = partial(requires_module, name='PIL',
@@ -811,11 +1060,10 @@ requires_ftp = partial(
     requires_module, name='ftp downloading capability',
     call='if int(os.environ.get("MNE_SKIP_FTP_TESTS", 0)):\n'
          '    raise ImportError')
-requires_nitime = partial(requires_module, name='nitime',
-                          call='import nitime')
-requires_traits = partial(requires_module, name='traits',
-                          call='import traits')
-requires_h5py = partial(requires_module, name='h5py', call='import h5py')
+requires_nitime = partial(requires_module, name='nitime')
+requires_traits = partial(requires_module, name='traits')
+requires_h5py = partial(requires_module, name='h5py')
+requires_numpydoc = partial(requires_module, name='numpydoc')
 
 
 def check_version(library, min_version):
@@ -892,7 +1140,7 @@ def run_subprocess(command, verbose=None, *args, **kwargs):
 
     Parameters
     ----------
-    command : list of str
+    command : list of str | str
         Command to run as subprocess (see subprocess.Popen documentation).
     verbose : bool, str, int, or None
         If not None, override default verbose level (see mne.verbose).
@@ -926,12 +1174,19 @@ def run_subprocess(command, verbose=None, *args, **kwargs):
              'starting with a tilde ("~") character. Such paths are not '
              'interpreted correctly from within Python. It is recommended '
              'that you use "$HOME" instead of "~".')
-
-    logger.info("Running subprocess: %s" % ' '.join(command))
+    if isinstance(command, string_types):
+        command_str = command
+    else:
+        command_str = ' '.join(command)
+    logger.info("Running subprocess: %s" % command_str)
     try:
         p = subprocess.Popen(command, *args, **kwargs)
     except Exception:
-        logger.error('Command not found: %s' % (command[0],))
+        if isinstance(command, string_types):
+            command_name = command.split()[0]
+        else:
+            command_name = command[0]
+        logger.error('Command not found: %s' % command_name)
         raise
     stdout_, stderr = p.communicate()
     stdout_ = '' if stdout_ is None else stdout_.decode('utf-8')
@@ -1095,6 +1350,8 @@ def _get_extra_data_path(home_dir=None):
     """Get path to extra data (config, tables, etc.)"""
     global _temp_home_dir
     if home_dir is None:
+        home_dir = os.environ.get('_MNE_FAKE_HOME_DIR')
+    if home_dir is None:
         # this has been checked on OSX64, Linux64, and Win32
         if 'nt' == os.name.lower():
             home_dir = os.getenv('APPDATA')
@@ -1159,7 +1416,7 @@ def set_cache_dir(cache_dir):
     if cache_dir is not None and not op.exists(cache_dir):
         raise IOError('Directory %s does not exist' % cache_dir)
 
-    set_config('MNE_CACHE_DIR', cache_dir)
+    set_config('MNE_CACHE_DIR', cache_dir, set_env=False)
 
 
 def set_memmap_min_size(memmap_min_size):
@@ -1179,7 +1436,7 @@ def set_memmap_min_size(memmap_min_size):
             raise ValueError('The size has to be given in kilo-, mega-, or '
                              'gigabytes, e.g., 100K, 500M, 1G.')
 
-    set_config('MNE_MEMMAP_MIN_SIZE', memmap_min_size)
+    set_config('MNE_MEMMAP_MIN_SIZE', memmap_min_size, set_env=False)
 
 
 # List the known configuration values
@@ -1205,6 +1462,7 @@ known_config_types = (
     'MNE_SKIP_TESTING_DATASET_TESTS',
     'MNE_STIM_CHANNEL',
     'MNE_USE_CUDA',
+    'MNE_SKIP_FS_FLASH_CALL',
     'SUBJECTS_DIR',
 )
 
@@ -1212,6 +1470,22 @@ known_config_types = (
 known_config_wildcards = (
     'MNE_STIM_CHANNEL',
 )
+
+
+def _load_config(config_path, raise_error=False):
+    """Helper to safely load a config file"""
+    with open(config_path, 'r') as fid:
+        try:
+            config = json.load(fid)
+        except ValueError:
+            # No JSON object could be decoded --> corrupt file?
+            msg = ('The MNE-Python config file (%s) is not a valid JSON '
+                   'file and might be corrupted' % config_path)
+            if raise_error:
+                raise RuntimeError(msg)
+            warn(msg)
+            config = dict()
+    return config
 
 
 def get_config(key=None, default=None, raise_error=False, home_dir=None):
@@ -1255,16 +1529,14 @@ def get_config(key=None, default=None, raise_error=False, home_dir=None):
         key_found = False
         val = default
     else:
-        with open(config_path, 'r') as fid:
-            config = json.load(fid)
-            if key is None:
-                return config
+        config = _load_config(config_path)
+        if key is None:
+            return config
         key_found = key in config
         val = config.get(key, default)
-
     if not key_found and raise_error is True:
         meth_1 = 'os.environ["%s"] = VALUE' % key
-        meth_2 = 'mne.utils.set_config("%s", VALUE)' % key
+        meth_2 = 'mne.utils.set_config("%s", VALUE, set_env=True)' % key
         raise KeyError('Key "%s" not found in environment or in the '
                        'mne-python config file: %s '
                        'Try either:'
@@ -1276,7 +1548,7 @@ def get_config(key=None, default=None, raise_error=False, home_dir=None):
     return val
 
 
-def set_config(key, value, home_dir=None):
+def set_config(key, value, home_dir=None, set_env=None):
     """Set mne-python preference in config
 
     Parameters
@@ -1290,6 +1562,9 @@ def set_config(key, value, home_dir=None):
     home_dir : str | None
         The folder that contains the .mne config folder.
         If None, it is found automatically.
+    set_env : bool
+        If True, update :data:`os.environ` in addition to updating the
+        MNE-Python config file.
 
     See Also
     --------
@@ -1306,20 +1581,28 @@ def set_config(key, value, home_dir=None):
     if key not in known_config_types and not \
             any(k in key for k in known_config_wildcards):
         warn('Setting non-standard config type: "%s"' % key)
+    if set_env is None:
+        warnings.warn('set_env defaults to False in 0.13 but will change '
+                      'to True in 0.14, set it explicitly to avoid this '
+                      'warning', DeprecationWarning)
+        set_env = False
 
     # Read all previous values
     config_path = get_config_path(home_dir=home_dir)
     if op.isfile(config_path):
-        with open(config_path, 'r') as fid:
-            config = json.load(fid)
+        config = _load_config(config_path, raise_error=True)
     else:
         config = dict()
         logger.info('Attempting to create new mne-python configuration '
                     'file:\n%s' % config_path)
     if value is None:
         config.pop(key, None)
+        if set_env and key in os.environ:
+            del os.environ[key]
     else:
         config[key] = value
+        if set_env:
+            os.environ[key] = value
 
     # Write all values. This may fail if the default directory is not
     # writeable.
@@ -1644,6 +1927,44 @@ def sizeof_fmt(num):
         return '1 byte'
 
 
+class SizeMixin(object):
+    """Class to estimate MNE object sizes"""
+    @property
+    def _size(self):
+        """Estimate of the object size"""
+        try:
+            size = object_size(self.info)
+        except Exception:
+            warn('Could not get size for self.info')
+            return -1
+        if hasattr(self, 'data'):
+            size += object_size(self.data)
+        elif hasattr(self, '_data'):
+            size += object_size(self._data)
+        return size
+
+    def __hash__(self):
+        """Hash the object
+
+        Returns
+        -------
+        hash : int
+            The hash
+        """
+        from .evoked import Evoked
+        from .epochs import _BaseEpochs
+        from .io.base import _BaseRaw
+        if isinstance(self, Evoked):
+            return object_hash(dict(info=self.info, data=self.data))
+        elif isinstance(self, (_BaseEpochs, _BaseRaw)):
+            if not self.preload:
+                raise RuntimeError('Cannot hash %s unless data are loaded'
+                                   % self.__class__.__name__)
+            return object_hash(dict(info=self.info, data=self._data))
+        else:
+            raise RuntimeError('Hashing unknown object type: %s' % type(self))
+
+
 def _url_to_local_path(url, path):
     """Mirror a url path in a local destination (keeping folder structure)"""
     destination = urllib.parse.urlparse(url).path
@@ -1655,7 +1976,7 @@ def _url_to_local_path(url, path):
     return destination
 
 
-def _get_stim_channel(stim_channel, info):
+def _get_stim_channel(stim_channel, info, raise_error=True):
     """Helper to determine the appropriate stim_channel
 
     First, 'MNE_STIM_CHANNEL', 'MNE_STIM_CHANNEL_1', 'MNE_STIM_CHANNEL_2', etc.
@@ -1700,10 +2021,10 @@ def _get_stim_channel(stim_channel, info):
     stim_channel = pick_types(info, meg=False, ref_meg=False, stim=True)
     if len(stim_channel) > 0:
         stim_channel = [info['ch_names'][ch_] for ch_ in stim_channel]
-        return stim_channel
-
-    raise ValueError("No stim channels found. Consider specifying them "
-                     "manually using the 'stim_channel' parameter.")
+    elif raise_error:
+        raise ValueError("No stim channels found. Consider specifying them "
+                         "manually using the 'stim_channel' parameter.")
+    return stim_channel
 
 
 def _check_fname(fname, overwrite=False, must_exist=False):
@@ -2092,8 +2413,7 @@ def grand_average(all_inst, interpolate_bads=True, drop_bads=True):
     from .evoked import Evoked
     from .time_frequency import AverageTFR
     from .channels.channels import equalize_channels
-    if not any([(all(isinstance(inst, t) for inst in all_inst)
-                for t in (Evoked, AverageTFR))]):
+    if not all(isinstance(inst, (Evoked, AverageTFR)) for inst in all_inst):
         raise ValueError("Not all input elements are Evoked or AverageTFR")
 
     # Copy channels to leave the original evoked datasets intact.
@@ -2106,7 +2426,7 @@ def grand_average(all_inst, interpolate_bads=True, drop_bads=True):
                         else inst for inst in all_inst]
         equalize_channels(all_inst)  # apply equalize_channels
         from .evoked import combine_evoked as combine
-    elif isinstance(all_inst[0], AverageTFR):
+    else:  # isinstance(all_inst[0], AverageTFR):
         from .time_frequency.tfr import combine_tfr as combine
 
     if drop_bads:
@@ -2212,3 +2532,16 @@ def sys_info(fid=None, show_paths=False):
                 extra = ' {%s}%s' % (libs, extra)
             out += '%s%s\n' % (version, extra)
     print(out, end='', file=fid)
+
+
+class ETSContext(object):
+    """Add more meaningful message to errors generated by ETS Toolkit"""
+    def __enter__(self):
+        pass
+
+    def __exit__(self, type, value, traceback):
+        if isinstance(value, SystemExit) and value.code.\
+                startswith("This program needs access to the screen"):
+            value.code += ("\nThis can probably be solved by setting "
+                           "ETS_TOOLKIT=qt4. On bash, type\n\n    $ export "
+                           "ETS_TOOLKIT=qt4\n\nand run the command again.")

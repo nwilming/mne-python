@@ -14,7 +14,8 @@ from scipy import sparse
 
 from ..externals.six import string_types
 
-from ..utils import verbose, logger, warn
+from ..utils import verbose, logger, warn, copy_function_doc_to_method_doc
+from ..io.compensator import get_current_comp
 from ..io.meas_info import anonymize_info
 from ..io.pick import (channel_type, pick_info, pick_types,
                        _check_excludes_includes, _PICK_TYPES_KEYS)
@@ -26,6 +27,7 @@ def _get_meg_system(info):
     system = '306m'
     for ch in info['chs']:
         if ch['kind'] == FIFF.FIFFV_MEG_CH:
+            # Only take first 16 bits, as higher bits store CTF grad comp order
             coil_type = ch['coil_type'] & 0xFFFF
             if coil_type == FIFF.FIFFV_COIL_NM_122:
                 system = '122m'
@@ -173,6 +175,12 @@ class ContainsMixin(object):
         else:
             has_ch_type = _contains_ch_type(self.info, ch_type)
         return has_ch_type
+
+    @property
+    def compensation_grade(self):
+        """The current gradient compensation grade"""
+        return get_current_comp(self.info)
+
 
 # XXX Eventually de-duplicate with _kind_dict of mne/io/meas_info.py
 _human2fiff = {'ecg': FIFF.FIFFV_ECG_CH,
@@ -361,23 +369,50 @@ class SetChannelsMixin(object):
         _set_montage(self.info, montage)
 
     def plot_sensors(self, kind='topomap', ch_type=None, title=None,
-                     show_names=False, show=True):
+                     show_names=False, ch_groups=None, axes=None, block=False,
+                     show=True):
         """
         Plot sensors positions.
 
         Parameters
         ----------
         kind : str
-            Whether to plot the sensors as 3d or as topomap. Available options
-            'topomap', '3d'. Defaults to 'topomap'.
-        ch_type : 'mag' | 'grad' | 'eeg' | 'seeg' | 'ecog' | None
-            The channel type to plot. If None, then channels are chosen in the
-            order given above.
+            Whether to plot the sensors as 3d, topomap or as an interactive
+            sensor selection dialog. Available options 'topomap', '3d',
+            'select'. If 'select', a set of channels can be selected
+            interactively by using lasso selector or clicking while holding
+            control key. The selected channels are returned along with the
+            figure instance. Defaults to 'topomap'.
+        ch_type : None | str
+            The channel type to plot. Available options 'mag', 'grad', 'eeg',
+            'seeg', 'ecog', 'all'. If ``'all'``, all the available mag, grad,
+            eeg, seeg and ecog channels are plotted. If None (default), then
+            channels are chosen in the order given above.
         title : str | None
-            Title for the figure. If None (default), equals to
-            ``'Sensor positions (%s)' % ch_type``.
+            Title for the figure. If None (default), equals to ``'Sensor
+            positions (%s)' % ch_type``.
         show_names : bool
             Whether to display all channel names. Defaults to False.
+        ch_groups : 'position' | array of shape (ch_groups, picks) | None
+            Channel groups for coloring the sensors. If None (default), default
+            coloring scheme is used. If 'position', the sensors are divided
+            into 8 regions. See ``order`` kwarg of :func:`mne.viz.plot_raw`. If
+            array, the channels are divided by picks given in the array.
+
+            .. versionadded:: 0.13.0
+
+        axes : instance of Axes | instance of Axes3D | None
+            Axes to draw the sensors to. If ``kind='3d'``, axes must be an
+            instance of Axes3D. If None (default), a new axes will be created.
+
+            .. versionadded:: 0.13.0
+
+        block : bool
+            Whether to halt program execution until the figure is closed.
+            Defaults to False.
+
+            .. versionadded:: 0.13.0
+
         show : bool
             Show figure if True. Defaults to True.
 
@@ -385,6 +420,8 @@ class SetChannelsMixin(object):
         -------
         fig : instance of matplotlib figure
             Figure containing the sensor topography.
+        selection : list
+            A list of selected channels. Only returned if ``kind=='select'``.
 
         See Also
         --------
@@ -397,26 +434,15 @@ class SetChannelsMixin(object):
         :func:`mne.viz.plot_trans`.
 
         .. versionadded:: 0.12.0
-
         """
         from ..viz.utils import plot_sensors
         return plot_sensors(self.info, kind=kind, ch_type=ch_type, title=title,
-                            show_names=show_names, show=show)
+                            show_names=show_names, ch_groups=ch_groups,
+                            axes=axes, block=block, show=show)
 
+    @copy_function_doc_to_method_doc(anonymize_info)
     def anonymize(self):
-        """Anonymize measurement information in place by removing
-        'subject_info', 'meas_date', 'file_id', 'meas_id' if they exist in
-        ``info``.
-
-        Returns
-        -------
-        self : instance of Raw | Epochs | Evoked
-            The data container.
-
-        Notes
-        -----
-        Operates in place.
-
+        """
         .. versionadded:: 0.13.0
         """
         anonymize_info(self.info)
@@ -429,8 +455,8 @@ class UpdateChannelsMixin(object):
     def pick_types(self, meg=True, eeg=False, stim=False, eog=False,
                    ecg=False, emg=False, ref_meg='auto', misc=False,
                    resp=False, chpi=False, exci=False, ias=False, syst=False,
-                   seeg=False, bio=False, ecog=False, include=[],
-                   exclude='bads', selection=None):
+                   seeg=False, dipole=False, gof=False, bio=False, ecog=False,
+                   include=[], exclude='bads', selection=None):
         """Pick some channels by type and names
 
         Parameters
@@ -468,6 +494,10 @@ class UpdateChannelsMixin(object):
             System status channel information (on Triux systems only).
         seeg : bool
             Stereotactic EEG channels.
+        dipole : bool
+            Dipole time course channels.
+        gof : bool
+            Dipole goodness of fit channels.
         bio : bool
             Bio channels.
         ecog : bool
@@ -493,8 +523,8 @@ class UpdateChannelsMixin(object):
         idx = pick_types(
             self.info, meg=meg, eeg=eeg, stim=stim, eog=eog, ecg=ecg, emg=emg,
             ref_meg=ref_meg, misc=misc, resp=resp, chpi=chpi, exci=exci,
-            ias=ias, syst=syst, seeg=seeg, bio=bio, ecog=ecog, include=include,
-            exclude=exclude, selection=selection)
+            ias=ias, syst=syst, seeg=seeg, dipole=dipole, gof=gof, bio=bio,
+            ecog=ecog, include=include, exclude=exclude, selection=selection)
         self._pick_drop_channels(idx)
         return self
 

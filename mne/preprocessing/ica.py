@@ -35,6 +35,7 @@ from ..io.base import _BaseRaw
 from ..epochs import _BaseEpochs
 from ..viz import (plot_ica_components, plot_ica_scores,
                    plot_ica_sources, plot_ica_overlay)
+from ..viz.ica import plot_ica_properties
 from ..viz.utils import (_prepare_trellis, tight_layout, plt_show,
                          _setup_vmin_vmax)
 from ..viz.topomap import (_prepare_topo_plot, _check_outlines,
@@ -44,12 +45,14 @@ from ..channels.channels import _contains_ch_type, ContainsMixin
 from ..io.write import start_file, end_file, write_id
 from ..utils import (check_version, logger, check_fname, verbose,
                      _reject_data_segments, check_random_state,
-                     _get_fast_dot, compute_corr)
+                     _get_fast_dot, compute_corr, _get_inst_data,
+                     copy_function_doc_to_method_doc)
 from ..fixes import _get_args
 from ..filter import band_pass_filter
 from .bads import find_outliers
 from .ctps_ import ctps
 from ..externals.six import string_types, text_type
+from ..io.pick import channel_type
 
 
 __all__ = ['ICA', 'ica_find_ecg_events', 'ica_find_eog_events',
@@ -86,6 +89,27 @@ def get_score_funcs():
                             for n, f in xy_arg_stats_funcs
                             if _get_args(f) == ['x', 'y']))
     return score_funcs
+
+
+def _check_for_unsupported_ica_channels(picks, info):
+    """Check for channels in picks that are not considered
+    valid channels. Accepted channels are the data channels
+    ('seeg','ecog','eeg','mag', and 'grad') and 'eog'.
+    This prevents the program from crashing without
+    feedback when a bad channel is provided to ICA whitening.
+    """
+    if picks is None:
+        return
+    elif len(picks) == 0:
+        raise ValueError('No channels provided to ICA')
+    types = _DATA_CH_TYPES_SPLIT + ['eog']
+    chs = list(set([channel_type(info, j) for j in picks]))
+    check = all([ch in types for ch in chs])
+    if not check:
+        raise ValueError('Invalid channel type(s) passed for ICA.\n'
+                         'Only the following channels are supported {}\n'
+                         'Following types were passed {}\n'
+                         .format(types, chs))
 
 
 class ICA(ContainsMixin):
@@ -164,7 +188,7 @@ class ICA(ContainsMixin):
         The number of components used for PCA dimensionality reduction.
     verbose : bool, str, int, or None
         See above.
-    ``pca_components_` : ndarray
+    ``pca_components_`` : ndarray
         If fit, the PCA components
     ``pca_mean_`` : ndarray
         If fit, the mean vector used to center the data before doing the PCA.
@@ -326,13 +350,21 @@ class ICA(ContainsMixin):
         self : instance of ICA
             Returns the modified instance.
         """
-        if isinstance(inst, _BaseRaw):
-            self._fit_raw(inst, picks, start, stop, decim, reject, flat,
-                          tstep, verbose)
-        elif isinstance(inst, _BaseEpochs):
-            self._fit_epochs(inst, picks, decim, verbose)
+        if isinstance(inst, _BaseRaw) or isinstance(inst, _BaseEpochs):
+            _check_for_unsupported_ica_channels(picks, inst.info)
+            if isinstance(inst, _BaseRaw):
+                self._fit_raw(inst, picks, start, stop, decim, reject, flat,
+                              tstep, verbose)
+            elif isinstance(inst, _BaseEpochs):
+                self._fit_epochs(inst, picks, decim, verbose)
         else:
             raise ValueError('Data input must be of Raw or Epochs type')
+
+        # sort ICA components by explained variance
+        var = _ica_explained_variance(self, inst)
+        var_ord = var.argsort()[::-1]
+        _sort_components(self, var_ord, copy=False)
+
         return self
 
     def _reset(self):
@@ -440,7 +472,7 @@ class ICA(ContainsMixin):
             # Scale (z-score) the data by channel type
             info = pick_info(info, picks)
             pre_whitener = np.empty([len(data), 1])
-            for ch_type in _DATA_CH_TYPES_SPLIT:
+            for ch_type in _DATA_CH_TYPES_SPLIT + ['eog']:
                 if _contains_ch_type(info, ch_type):
                     if ch_type == 'seeg':
                         this_picks = pick_types(info, meg=False, seeg=True)
@@ -448,8 +480,14 @@ class ICA(ContainsMixin):
                         this_picks = pick_types(info, meg=False, ecog=True)
                     elif ch_type == 'eeg':
                         this_picks = pick_types(info, meg=False, eeg=True)
-                    else:
+                    elif ch_type in ['mag', 'grad']:
                         this_picks = pick_types(info, meg=ch_type)
+                    elif ch_type == 'eog':
+                        this_picks = pick_types(info, meg=False, eog=True)
+                    else:
+                        raise RuntimeError('Should not be reached.'
+                                           'Unsupported channel {}'
+                                           .format(ch_type))
                     pre_whitener[this_picks] = np.std(data[this_picks])
             data /= pre_whitener
         elif not has_pre_whitener and self.noise_cov is not None:
@@ -467,13 +505,19 @@ class ICA(ContainsMixin):
 
     def _fit(self, data, max_pca_components, fit_type):
         """Aux function """
-        from sklearn.decomposition import RandomizedPCA
 
         random_state = check_random_state(self.random_state)
 
-        # XXX fix copy==True later. Bug in sklearn, see PR #2273
-        pca = RandomizedPCA(n_components=max_pca_components, whiten=True,
-                            copy=True, random_state=random_state)
+        if not check_version('sklearn', '0.18'):
+            from sklearn.decomposition import RandomizedPCA
+            # XXX fix copy==True later. Bug in sklearn, see PR #2273
+            pca = RandomizedPCA(n_components=max_pca_components, whiten=True,
+                                copy=True, random_state=random_state)
+
+        else:
+            from sklearn.decomposition import PCA
+            pca = PCA(n_components=max_pca_components, copy=True, whiten=True,
+                      svd_solver='randomized', random_state=random_state)
 
         if isinstance(self.n_components, float):
             # compute full feature variance before doing PCA
@@ -508,9 +552,12 @@ class ICA(ContainsMixin):
         # the things to store for PCA
         self.pca_mean_ = pca.mean_
         self.pca_components_ = pca.components_
-        # unwhiten pca components and put scaling in unmixintg matrix later.
         self.pca_explained_variance_ = exp_var = pca.explained_variance_
-        self.pca_components_ *= np.sqrt(exp_var[:, None])
+        if not check_version('sklearn', '0.18'):
+            # unwhiten pca components and put scaling in unmixing matrix later.
+            # RandomizedPCA applies the whitening to the components
+            # but not the new PCA class.
+            self.pca_components_ *= np.sqrt(exp_var[:, None])
         del pca
         # update number of components
         self.n_components_ = sel.stop
@@ -1291,215 +1338,48 @@ class ICA(ContainsMixin):
         """
         return deepcopy(self)
 
+    @copy_function_doc_to_method_doc(plot_ica_components)
     def plot_components(self, picks=None, ch_type=None, res=64, layout=None,
                         vmin=None, vmax=None, cmap='RdBu_r', sensors=True,
                         colorbar=False, title=None, show=True, outlines='head',
-                        contours=6, image_interp='bilinear', head_pos=None):
-        """Project unmixing matrix on interpolated sensor topography.
-
-        Parameters
-        ----------
-        picks : int | array-like | None
-            The indices of the sources to be plotted.
-            If None all are plotted in batches of 20.
-        ch_type : 'mag' | 'grad' | 'planar1' | 'planar2' | 'eeg' | None
-            The channel type to plot. For 'grad', the gradiometers are
-            collected in pairs and the RMS for each pair is plotted.
-            If None, then first available channel type from order given
-            above is used. Defaults to None.
-        res : int
-            The resolution of the topomap image (n pixels along each side).
-        layout : None | Layout
-            Layout instance specifying sensor positions (does not need to
-            be specified for Neuromag data). If possible, the correct layout is
-            inferred from the data.
-        vmin : float | callable
-            The value specfying the lower bound of the color range.
-            If None, and vmax is None, -vmax is used. Else np.min(data).
-            If callable, the output equals vmin(data).
-        vmax : float | callable
-            The value specfying the upper bound of the color range.
-            If None, the maximum absolute value is used. If vmin is None,
-            but vmax is not, defaults to np.min(data).
-            If callable, the output equals vmax(data).
-        cmap : matplotlib colormap
-            Colormap.
-        sensors : bool | str
-            Add markers for sensor locations to the plot. Accepts matplotlib
-            plot format string (e.g., 'r+' for red plusses). If True, a circle
-            will be used (via .add_artist). Defaults to True.
-        colorbar : bool
-            Plot a colorbar.
-        title : str | None
-            Title to use.
-        show : bool
-            Call pyplot.show() at the end.
-        outlines : 'head' | 'skirt' | dict | None
-            The outlines to be drawn. If 'head', the default head scheme will
-            be drawn. If 'skirt' the head scheme will be drawn, but sensors are
-            allowed to be plotted outside of the head circle. If dict, each key
-            refers to a tuple of x and y positions, the values in 'mask_pos'
-            will serve as image mask, and the 'autoshrink' (bool) field will
-            trigger automated shrinking of the positions due to points outside
-            the outline. Alternatively, a matplotlib patch object can be passed
-            for advanced masking options, either directly or as a function that
-            returns patches (required for multi-axis plots). If None, nothing
-            will be drawn. Defaults to 'head'.
-        contours : int | False | None
-            The number of contour lines to draw. If 0, no contours will
-            be drawn.
-        image_interp : str
-            The image interpolation to be used. All matplotlib options are
-            accepted.
-        head_pos : dict | None
-            If None (default), the sensors are positioned such that they span
-            the head circle. If dict, can have entries 'center' (tuple) and
-            'scale' (tuple) for what the center and scale of the head should be
-            relative to the electrode locations.
-
-        Returns
-        -------
-        fig : instance of matplotlib.pyplot.Figure
-            The figure object.
-        """
+                        contours=6, image_interp='bilinear', head_pos=None,
+                        inst=None):
         return plot_ica_components(self, picks=picks, ch_type=ch_type,
                                    res=res, layout=layout, vmin=vmin,
                                    vmax=vmax, cmap=cmap, sensors=sensors,
                                    colorbar=colorbar, title=title, show=show,
                                    outlines=outlines, contours=contours,
                                    image_interp=image_interp,
-                                   head_pos=head_pos)
+                                   head_pos=head_pos, inst=inst)
 
+    @copy_function_doc_to_method_doc(plot_ica_properties)
+    def plot_properties(self, inst, picks=None, axes=None, dB=True,
+                        plot_std=True, topomap_args=None, image_args=None,
+                        psd_args=None, figsize=None, show=True):
+        return plot_ica_properties(self, inst, picks=picks, axes=axes,
+                                   dB=dB, plot_std=plot_std,
+                                   topomap_args=topomap_args,
+                                   image_args=image_args, psd_args=psd_args,
+                                   figsize=figsize, show=show)
+
+    @copy_function_doc_to_method_doc(plot_ica_sources)
     def plot_sources(self, inst, picks=None, exclude=None, start=None,
                      stop=None, title=None, show=True, block=False):
-        """Plot estimated latent sources given the unmixing matrix.
-
-        Typical usecases:
-
-        1. plot evolution of latent sources over time based on (Raw input)
-        2. plot latent source around event related time windows (Epochs input)
-        3. plot time-locking in ICA space (Evoked input)
-
-
-        Parameters
-        ----------
-        inst : instance of mne.io.Raw, mne.Epochs, mne.Evoked
-            The object to plot the sources from.
-        picks : ndarray | None.
-            The components to be displayed. If None, plot will show the
-            sources in the order as fitted.
-        exclude : array_like of int
-            The components marked for exclusion. If None (default), ICA.exclude
-            will be used.
-        start : int
-            X-axis start index. If None from the beginning.
-        stop : int
-            X-axis stop index. If None to the end.
-        title : str | None
-            The figure title. If None a default is provided.
-        show : bool
-            If True, all open plots will be shown.
-        block : bool
-            Whether to halt program execution until the figure is closed.
-            Useful for interactive selection of components in raw and epoch
-            plotter. For evoked, this parameter has no effect. Defaults to
-            False.
-
-        Returns
-        -------
-        fig : instance of pyplot.Figure
-            The figure.
-
-        Notes
-        -----
-        For raw and epoch instances, it is possible to select components for
-        exclusion by clicking on the line. The selected components are added to
-        ``ica.exclude`` on close. The independent components can be viewed as
-        topographies by clicking on the component name on the left of of the
-        main axes. The topography view tries to infer the correct electrode
-        layout from the data. This should work at least for Neuromag data.
-
-        .. versionadded:: 0.10.0
-        """
-
         return plot_ica_sources(self, inst=inst, picks=picks, exclude=exclude,
-                                title=title, start=start, stop=stop, show=show,
+                                start=start, stop=stop, title=title, show=show,
                                 block=block)
 
+    @copy_function_doc_to_method_doc(plot_ica_scores)
     def plot_scores(self, scores, exclude=None, labels=None, axhline=None,
                     title='ICA component scores', figsize=(12, 6),
                     show=True):
-        """Plot scores related to detected components.
-
-        Use this function to assess how well your score describes outlier
-        sources and how well you were detecting them.
-
-        Parameters
-        ----------
-        scores : array_like of float, shape (n ica components,) | list of array
-            Scores based on arbitrary metric to characterize ICA components.
-        exclude : array_like of int
-            The components marked for exclusion. If None (default), ICA.exclude
-            will be used.
-        labels : str | list | 'ecg' | 'eog' | None
-            The labels to consider for the axes tests. Defaults to None.
-            If list, should match the outer shape of `scores`.
-            If 'ecg' or 'eog', the ``labels_`` attributes will be looked up.
-            Note that '/' is used internally for sublabels specifying ECG and
-            EOG channels.
-        axhline : float
-            Draw horizontal line to e.g. visualize rejection threshold.
-        title : str
-            The figure title.
-        figsize : tuple of int
-            The figure size. Defaults to (12, 6).
-        show : bool
-            If True, all open plots will be shown.
-
-        Returns
-        -------
-        fig : instance of matplotlib.pyplot.Figure
-            The figure object.
-        """
         return plot_ica_scores(
             ica=self, scores=scores, exclude=exclude, labels=labels,
             axhline=axhline, title=title, figsize=figsize, show=show)
 
+    @copy_function_doc_to_method_doc(plot_ica_overlay)
     def plot_overlay(self, inst, exclude=None, picks=None, start=None,
                      stop=None, title=None, show=True):
-        """Overlay of raw and cleaned signals given the unmixing matrix.
-
-        This method helps visualizing signal quality and artifact rejection.
-
-        Parameters
-        ----------
-        inst : instance of mne.io.Raw or mne.Evoked
-            The signals to be compared given the ICA solution. If Raw input,
-            The raw data are displayed before and after cleaning. In a second
-            panel the cross channel average will be displayed. Since dipolar
-            sources will be canceled out this display is sensitive to
-            artifacts. If evoked input, butterfly plots for clean and raw
-            signals will be superimposed.
-        exclude : array_like of int
-            The components marked for exclusion. If None (default), ICA.exclude
-            will be used.
-        picks : array-like of int | None (default)
-            Indices of channels to include (if None, all channels
-            are used that were included on fitting).
-        start : int
-            X-axis start index. If None from the beginning.
-        stop : int
-            X-axis stop index. If None to the end.
-        title : str
-            The figure title.
-        show : bool
-            If True, all open plots will be shown.
-
-        Returns
-        -------
-        fig : instance of pyplot.Figure
-            The figure.
-        """
         return plot_ica_overlay(self, inst=inst, exclude=exclude, picks=picks,
                                 start=start, stop=stop, title=title, show=show)
 
@@ -1749,6 +1629,68 @@ def _find_sources(sources, target, score_func):
               else score_func(sources, 1))
 
     return scores
+
+
+def _ica_explained_variance(ica, inst, normalize=False):
+    """Checks variance accounted for by each component in supplied data.
+
+    Parameters
+    ----------
+    ica : ICA
+        Instance of `mne.preprocessing.ICA`.
+    inst : Raw | Epochs | Evoked
+        Data to explain with ICA. Instance of Raw, Epochs or Evoked.
+    normalize : bool
+        Whether to normalize the variance.
+
+    Returns
+    -------
+    var : array
+        Variance explained by each component.
+    """
+    # check if ica is ICA and whether inst is Raw or Epochs
+    if not isinstance(ica, ICA):
+        raise TypeError('first argument must be an instance of ICA.')
+    if not isinstance(inst, (_BaseRaw, _BaseEpochs, Evoked)):
+        raise TypeError('second argument must an instance of either Raw, '
+                        'Epochs or Evoked.')
+
+    source_data = _get_inst_data(ica.get_sources(inst))
+
+    # if epochs - reshape to channels x timesamples
+    if isinstance(inst, _BaseEpochs):
+        n_epochs, n_chan, n_samp = source_data.shape
+        source_data = source_data.transpose(1, 0, 2).reshape(
+            (n_chan, n_epochs * n_samp))
+
+    n_chan, n_samp = source_data.shape
+    var = np.sum(ica.mixing_matrix_**2, axis=0) * np.sum(
+        source_data**2, axis=1) / (n_chan * n_samp - 1)
+    if normalize:
+        var /= var.sum()
+    return var
+
+
+def _sort_components(ica, order, copy=True):
+    """Change the order of components in ica solution."""
+    assert ica.n_components_ == len(order)
+    if copy:
+        ica = ica.copy()
+
+    # reorder components
+    ica.mixing_matrix_ = ica.mixing_matrix_[:, order]
+    ica.unmixing_matrix_ = ica.unmixing_matrix_[order, :]
+
+    # reorder labels, excludes etc.
+    if isinstance(order, np.ndarray):
+        order = list(order)
+    if ica.exclude:
+        ica.exclude = [order.index(ic) for ic in ica.exclude]
+    if hasattr(ica, 'labels_'):
+        for k in ica.labels_.keys():
+            ica.labels_[k] = [order.index(ic) for ic in ica.labels_[k]]
+
+    return ica
 
 
 def _serialize(dict_, outer_sep=';', inner_sep=':'):
@@ -2367,17 +2309,8 @@ def corrmap(icas, template, threshold="auto", label=None, ch_type="eeg",
         to True.
     show : bool
         Show figures if True.
-    layout : None | Layout | list of Layout
-        Layout instance specifying sensor positions (does not need to be
-        specified for Neuromag data). Or a list of Layout if projections
-        are from different sensor types.
-    cmap : None | matplotlib colormap
-        Colormap for the plot. If ``None``, defaults to 'Reds_r' for norm data,
-        otherwise to 'RdBu_r'.
-    sensors : bool | str
-        Add markers for sensor locations to the plot. Accepts matplotlib plot
-        format string (e.g., 'r+' for red plusses). If True, a circle will be
-        used (via .add_artist). Defaults to True.
+    verbose : bool, str, int, or None
+        If not None, override default verbose level (see mne.verbose).
     outlines : 'head' | dict | None
         The outlines to be drawn. If 'head', a head scheme will be drawn. If
         dict, each key refers to a tuple of x and y positions. The values in
@@ -2387,10 +2320,19 @@ def corrmap(icas, template, threshold="auto", label=None, ch_type="eeg",
         outline. Moreover, a matplotlib patch object can be passed for
         advanced masking options, either directly or as a function that returns
         patches (required for multi-axis plots).
+    layout : None | Layout | list of Layout
+        Layout instance specifying sensor positions (does not need to be
+        specified for Neuromag data). Or a list of Layout if projections
+        are from different sensor types.
+    sensors : bool | str
+        Add markers for sensor locations to the plot. Accepts matplotlib plot
+        format string (e.g., 'r+' for red plusses). If True, a circle will be
+        used (via .add_artist). Defaults to True.
     contours : int | False | None
         The number of contour lines to draw. If 0, no contours will be drawn.
-    verbose : bool, str, int, or None
-        If not None, override default verbose level (see mne.verbose).
+    cmap : None | matplotlib colormap
+        Colormap for the plot. If ``None``, defaults to 'Reds_r' for norm data,
+        otherwise to 'RdBu_r'.
 
     Returns
     -------

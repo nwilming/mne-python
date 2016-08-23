@@ -41,7 +41,7 @@ from ..source_estimate import VolSourceEstimate
 from ..transforms import (transform_surface_to, invert_transform,
                           write_trans)
 from ..utils import (_check_fname, get_subjects_dir, has_mne_c, warn,
-                     run_subprocess, check_fname, logger, verbose)
+                     run_subprocess, check_fname, logger, verbose, deprecated)
 from ..label import Label
 
 
@@ -57,9 +57,9 @@ class Forward(dict):
 
         entr = '<Forward'
 
-        nchan = len(pick_types(self['info'], meg=True, eeg=False))
+        nchan = len(pick_types(self['info'], meg=True, eeg=False, exclude=[]))
         entr += ' | ' + 'MEG channels: %d' % nchan
-        nchan = len(pick_types(self['info'], meg=False, eeg=True))
+        nchan = len(pick_types(self['info'], meg=False, eeg=True, exclude=[]))
         entr += ' | ' + 'EEG channels: %d' % nchan
 
         src_types = np.array([src['type'] for src in self['src']])
@@ -97,6 +97,8 @@ class Forward(dict):
         return entr
 
 
+@deprecated("it will be removed in mne 0.14; use mne.make_bem_solution() "
+            "instead.")
 def prepare_bem_model(bem, sol_fname=None, method='linear'):
     """Wrapper for the mne_prepare_bem_model command line utility
 
@@ -575,7 +577,7 @@ def convert_forward_solution(fwd, surf_ori=False, force_fixed=False,
 
     Parameters
     ----------
-    fwd : dict
+    fwd : Forward
         The forward solution to modify.
     surf_ori : bool, optional (default False)
         Use surface-based source coordinate system? Note that force_fixed=True
@@ -589,7 +591,7 @@ def convert_forward_solution(fwd, surf_ori=False, force_fixed=False,
 
     Returns
     -------
-    fwd : dict
+    fwd : Forward
         The modified forward solution.
     """
     fwd = fwd.copy() if copy else fwd
@@ -692,7 +694,7 @@ def write_forward_solution(fname, fwd, overwrite=False, verbose=None):
     fname : str
         File name to save the forward solution to. It should end with -fwd.fif
         or -fwd.fif.gz.
-    fwd : dict
+    fwd : Forward
         Forward solution.
     overwrite : bool
         If True, overwrite destination file (if it exists).
@@ -1128,7 +1130,7 @@ def apply_forward(fwd, stc, info, start=None, stop=None,
 
     Parameters
     ----------
-    fwd : dict
+    fwd : Forward
         Forward operator to use. Has to be fixed-orientation.
     stc : SourceEstimate
         The source estimate from which the sensor space data is computed.
@@ -1188,7 +1190,7 @@ def apply_forward_raw(fwd, stc, info, start=None, stop=None,
 
     Parameters
     ----------
-    fwd : dict
+    fwd : Forward
         Forward operator to use. Has to be fixed-orientation.
     stc : SourceEstimate
         The source estimate from which the sensor space data is computed.
@@ -1238,7 +1240,7 @@ def restrict_forward_to_stc(fwd, stc):
 
     Parameters
     ----------
-    fwd : dict
+    fwd : Forward
         Forward operator.
     stc : SourceEstimate
         Source estimate.
@@ -1285,7 +1287,7 @@ def restrict_forward_to_label(fwd, labels):
 
     Parameters
     ----------
-    fwd : dict
+    fwd : Forward
         Forward operator.
     labels : label object | list
         Label object or list of label objects.
@@ -1430,7 +1432,7 @@ def _do_forward_solution(subject, meas, fname=None, src=None, spacing=None,
 
     Returns
     -------
-    fwd : dict
+    fwd : Forward
         The generated forward solution.
     """
     if not has_mne_c():
@@ -1576,7 +1578,7 @@ def average_forward_solutions(fwds, weights=None):
 
     Parameters
     ----------
-    fwds : list of dict
+    fwds : list of Forward
         Forward solutions to average. Each entry (dict) should be a
         forward solution.
     weights : array | None
@@ -1586,7 +1588,7 @@ def average_forward_solutions(fwds, weights=None):
 
     Returns
     -------
-    fwd : dict
+    fwd : Forward
         The averaged forward solution.
     """
     # check for fwds being a list

@@ -6,7 +6,7 @@
 # License: BSD (3-clause)
 
 import copy
-import os
+import os.path as op
 from math import ceil
 import warnings
 
@@ -20,14 +20,15 @@ from .parallel import parallel_func
 from .surface import (read_surface, _get_ico_surface, read_morph_map,
                       _compute_nearest, mesh_edges)
 from .source_space import (_ensure_src, _get_morph_src_reordering,
-                           _ensure_src_subject)
+                           _ensure_src_subject, SourceSpaces)
 from .utils import (get_subjects_dir, _check_subject, logger, verbose,
-                    _time_mask, warn as warn_)
+                    _time_mask, warn as warn_, copy_function_doc_to_method_doc)
 from .viz import plot_source_estimates
 from .fixes import in1d, sparse_block_diag
 from .io.base import ToDataFrameMixin, TimeMixin
-from .externals.six.moves import zip
+
 from .externals.six import string_types
+from .externals.six.moves import zip
 from .externals.h5io import read_hdf5, write_hdf5
 
 
@@ -247,7 +248,7 @@ def read_source_estimate(fname, subject=None):
 
     # make sure corresponding file(s) can be found
     ftype = None
-    if os.path.exists(fname):
+    if op.exists(fname):
         if fname.endswith('-vl.stc') or fname.endswith('-vol.stc') or \
                 fname.endswith('-vl.w') or fname.endswith('-vol.w'):
             ftype = 'volume'
@@ -276,11 +277,11 @@ def read_source_estimate(fname, subject=None):
             raise RuntimeError('Unknown extension for file %s' % fname_arg)
 
     if ftype is not 'volume':
-        stc_exist = [os.path.exists(f)
+        stc_exist = [op.exists(f)
                      for f in [fname + '-rh.stc', fname + '-lh.stc']]
-        w_exist = [os.path.exists(f)
+        w_exist = [op.exists(f)
                    for f in [fname + '-rh.w', fname + '-lh.w']]
-        h5_exist = os.path.exists(fname + '-stc.h5')
+        h5_exist = op.exists(fname + '-stc.h5')
         if all(stc_exist) and (ftype is not 'w'):
             ftype = 'surface'
         elif all(w_exist):
@@ -910,6 +911,32 @@ class _BaseSourceEstimate(ToDataFrameMixin, TimeMixin):
         return stcs
 
 
+def _center_of_mass(vertices, values, hemi, surf, subject, subjects_dir,
+                    restrict_vertices):
+    """Helper to find the center of mass on a surface"""
+    if (values == 0).all() or (values < 0).any():
+        raise ValueError('All values must be non-negative and at least one '
+                         'must be non-zero, cannot compute COM')
+    subjects_dir = get_subjects_dir(subjects_dir, raise_error=True)
+    surf = read_surface(op.join(subjects_dir, subject, 'surf',
+                                hemi + '.' + surf))
+    if restrict_vertices is True:
+        restrict_vertices = vertices
+    elif restrict_vertices is False:
+        restrict_vertices = np.arange(surf[0].shape[0])
+    elif isinstance(restrict_vertices, SourceSpaces):
+        idx = 1 if restrict_vertices.kind == 'surface' and hemi == 'rh' else 0
+        restrict_vertices = restrict_vertices[idx]['vertno']
+    else:
+        restrict_vertices = np.array(restrict_vertices, int)
+    pos = surf[0][vertices, :].T
+    c_o_m = np.sum(pos * values, axis=1) / np.sum(values)
+    vertex = np.argmin(np.sqrt(np.mean((surf[0][restrict_vertices, :] -
+                                        c_o_m) ** 2, axis=1)))
+    vertex = restrict_vertices[vertex]
+    return vertex
+
+
 class SourceEstimate(_BaseSourceEstimate):
     """Container for surface source estimates
 
@@ -1194,15 +1221,19 @@ class SourceEstimate(_BaseSourceEstimate):
         return label_tc
 
     def center_of_mass(self, subject=None, hemi=None, restrict_vertices=False,
-                       subjects_dir=None):
-        """Return the vertex on a given surface that is at the center of mass
-        of  the activity in stc. Note that all activity must occur in a single
-        hemisphere, otherwise an error is returned. The "mass" of each point in
-        space for computing the spatial center of mass is computed by summing
-        across time, and vice-versa for each point in time in computing the
-        temporal center of mass. This is useful for quantifying spatio-temporal
-        cluster locations, especially when combined with the function
-        mne.source_space.vertex_to_mni().
+                       subjects_dir=None, surf='sphere'):
+        """Compute the center of mass of activity
+
+        This function computes the spatial center of mass on the surface
+        as well as the temporal center of mass as in [1]_.
+
+        .. note:: All activity must occur in a single hemisphere, otherwise
+                  an error is raised. The "mass" of each point in space for
+                  computing the spatial center of mass is computed by summing
+                  across time, and vice-versa for each point in time in
+                  computing the temporal center of mass. This is useful for
+                  quantifying spatio-temporal cluster locations, especially
+                  when combined with :func:`mne.source_space.vertex_to_mni`.
 
         Parameters
         ----------
@@ -1213,14 +1244,25 @@ class SourceEstimate(_BaseSourceEstimate):
             hemisphere. If None, one of the hemispheres must be all zeroes,
             and the center of mass will be calculated for the other
             hemisphere (useful for getting COM for clusters).
-        restrict_vertices : bool, or array of int
+        restrict_vertices : bool | array of int | instance of SourceSpaces
             If True, returned vertex will be one from stc. Otherwise, it could
             be any vertex from surf. If an array of int, the returned vertex
-            will come from that array. For most accuruate estimates, do not
-            restrict vertices.
+            will come from that array. If instance of SourceSpaces (as of
+            0.13), the returned vertex will be from the given source space.
+            For most accuruate estimates, do not restrict vertices.
         subjects_dir : str, or None
             Path to the SUBJECTS_DIR. If None, the path is obtained by using
             the environment variable SUBJECTS_DIR.
+        surf : str
+            The surface to use for Euclidean distance center of mass
+            finding. The default here is "sphere", which finds the center
+            of mass on the spherical surface to help avoid potential issues
+            with cortical folding.
+
+        See Also
+        --------
+        Label.center_of_mass
+        vertex_to_mni
 
         Returns
         -------
@@ -1235,12 +1277,16 @@ class SourceEstimate(_BaseSourceEstimate):
             Time of the temporal center of mass (weighted by the sum across
             source vertices).
 
-        References:
-            Used in Larson and Lee, "The cortical dynamics underlying effective
-            switching of auditory spatial attention", NeuroImage 2012.
+        References
+        ----------
+        .. [1] Larson and Lee, "The cortical dynamics underlying effective
+               switching of auditory spatial attention", NeuroImage 2012.
         """
+        if not isinstance(surf, string_types):
+            raise TypeError('surf must be a string, got %s' % (type(surf),))
         subject = _check_subject(self.subject, subject)
-
+        if np.any(self.data < 0):
+            raise ValueError('Cannot compute COM with negative values')
         values = np.sum(self.data, axis=1)  # sum across time
         vert_inds = [np.arange(len(self.vertices[0])),
                      np.arange(len(self.vertices[1])) + len(self.vertices[0])]
@@ -1252,115 +1298,27 @@ class SourceEstimate(_BaseSourceEstimate):
             hemi = hemi[0]
         if hemi not in [0, 1]:
             raise ValueError('hemi must be 0 or 1')
-
-        subjects_dir = get_subjects_dir(subjects_dir, raise_error=True)
-
-        values = values[vert_inds[hemi]]
-
-        hemis = ['lh', 'rh']
-        surf = os.path.join(subjects_dir, subject, 'surf',
-                            hemis[hemi] + '.sphere')
-
-        if isinstance(surf, string_types):  # read in surface
-            surf = read_surface(surf)
-
-        if restrict_vertices is False:
-            restrict_vertices = np.arange(surf[0].shape[0])
-        elif restrict_vertices is True:
-            restrict_vertices = self.vertices[hemi]
-
-        if np.any(self.data < 0):
-            raise ValueError('Cannot compute COM with negative values')
-
-        pos = surf[0][self.vertices[hemi], :].T
-        c_o_m = np.sum(pos * values, axis=1) / np.sum(values)
-
-        # Find the vertex closest to the COM
-        vertex = np.argmin(np.sqrt(np.mean((surf[0][restrict_vertices, :] -
-                                            c_o_m) ** 2, axis=1)))
-        vertex = restrict_vertices[vertex]
-
+        vertices = self.vertices[hemi]
+        values = values[vert_inds[hemi]]  # left or right
+        del vert_inds
+        vertex = _center_of_mass(
+            vertices, values, hemi=['lh', 'rh'][hemi], surf=surf,
+            subject=subject, subjects_dir=subjects_dir,
+            restrict_vertices=restrict_vertices)
         # do time center of mass by using the values across space
         masses = np.sum(self.data, axis=0).astype(float)
         t_ind = np.sum(masses * np.arange(self.shape[1])) / np.sum(masses)
         t = self.tmin + self.tstep * t_ind
         return vertex, hemi, t
 
+    @copy_function_doc_to_method_doc(plot_source_estimates)
     def plot(self, subject=None, surface='inflated', hemi='lh',
-             colormap='auto', time_label='time=%0.2f ms',
+             colormap='auto', time_label='auto',
              smoothing_steps=10, transparent=None, alpha=1.0,
              time_viewer=False, config_opts=None, subjects_dir=None,
-             figure=None, views='lat', colorbar=True, clim='auto'):
-        """Plot SourceEstimates with PySurfer
-
-        Note: PySurfer currently needs the SUBJECTS_DIR environment variable,
-        which will automatically be set by this function. Plotting multiple
-        SourceEstimates with different values for subjects_dir will cause
-        PySurfer to use the wrong FreeSurfer surfaces when using methods of
-        the returned Brain object. It is therefore recommended to set the
-        SUBJECTS_DIR environment variable or always use the same value for
-        subjects_dir (within the same Python session).
-
-        Parameters
-        ----------
-        subject : str | None
-            The subject name corresponding to FreeSurfer environment
-            variable SUBJECT. If None stc.subject will be used. If that
-            is None, the environment will be used.
-        surface : str
-            The type of surface (inflated, white etc.).
-        hemi : str, 'lh' | 'rh' | 'split' | 'both'
-            The hemisphere to display.
-        colormap : str | np.ndarray of float, shape(n_colors, 3 | 4)
-            Name of colormap to use or a custom look up table. If array, must
-            be (n x 3) or (n x 4) array for with RGB or RGBA values between
-            0 and 255. If 'auto', either 'hot' or 'mne' will be chosen
-            based on whether 'lims' or 'pos_lims' are specified in `clim`.
-        time_label : str
-            How to print info about the time instant visualized.
-        smoothing_steps : int
-            The amount of smoothing.
-        transparent : bool | None
-            If True, use a linear transparency between fmin and fmid.
-            None will choose automatically based on colormap type.
-        alpha : float
-            Alpha value to apply globally to the overlay.
-        time_viewer : bool
-            Display time viewer GUI.
-        config_opts : dict
-            Keyword arguments for Brain initialization.
-            See pysurfer.viz.Brain.
-        subjects_dir : str
-            The path to the FreeSurfer subjects reconstructions.
-            It corresponds to FreeSurfer environment variable SUBJECTS_DIR.
-        figure : instance of mayavi.core.scene.Scene | None
-            If None, the last figure will be cleaned and a new figure will
-            be created.
-        views : str | list
-            View to use. See surfer.Brain().
-        colorbar : bool
-            If True, display colorbar on scene.
-        clim : str | dict
-            Colorbar properties specification. If 'auto', set clim
-            automatically based on data percentiles. If dict, should contain:
-
-                kind : str
-                    Flag to specify type of limits. 'value' or 'percent'.
-                lims : list | np.ndarray | tuple of float, 3 elements
-                    Note: Only use this if 'colormap' is not 'mne'.
-                    Left, middle, and right bound for colormap.
-                pos_lims : list | np.ndarray | tuple of float, 3 elements
-                    Note: Only use this if 'colormap' is 'mne'.
-                    Left, middle, and right bound for colormap. Positive values
-                    will be mirrored directly across zero during colormap
-                    construction to obtain negative control points.
-
-
-        Returns
-        -------
-        brain : Brain
-            A instance of surfer.viz.Brain from PySurfer.
-        """
+             figure=None, views='lat', colorbar=True, clim='auto',
+             cortex="classic", size=800, background="black",
+             foreground="white", initial_time=None, time_unit=None):
         brain = plot_source_estimates(self, subject, surface=surface,
                                       hemi=hemi, colormap=colormap,
                                       time_label=time_label,
@@ -1370,7 +1328,11 @@ class SourceEstimate(_BaseSourceEstimate):
                                       config_opts=config_opts,
                                       subjects_dir=subjects_dir, figure=figure,
                                       views=views, colorbar=colorbar,
-                                      clim=clim)
+                                      clim=clim, cortex=cortex, size=size,
+                                      background=background,
+                                      foreground=foreground,
+                                      initial_time=initial_time,
+                                      time_unit=time_unit)
         return brain
 
     @verbose
@@ -1781,7 +1743,7 @@ class MixedSourceEstimate(_BaseSourceEstimate):
                      colormap='auto', time_label='time=%02.f ms',
                      smoothing_steps=10,
                      transparent=None, alpha=1.0, time_viewer=False,
-                     config_opts={}, subjects_dir=None, figure=None,
+                     config_opts=None, subjects_dir=None, figure=None,
                      views='lat', colorbar=True, clim='auto'):
         """Plot surface source estimates with PySurfer
 
@@ -1993,8 +1955,8 @@ def _morph_mult(data, e, use_sparse, idx_use_data, idx_use_out=None):
 
 
 def _get_subject_sphere_tris(subject, subjects_dir):
-    spheres = [os.path.join(subjects_dir, subject, 'surf',
-                            xh + '.sphere.reg') for xh in ['lh', 'rh']]
+    spheres = [op.join(subjects_dir, subject, 'surf',
+                       xh + '.sphere.reg') for xh in ['lh', 'rh']]
     tris = [read_surface(s)[1] for s in spheres]
     return tris
 
@@ -2219,7 +2181,7 @@ def grade_to_vertices(subject, grade, subjects_dir=None, n_jobs=1,
     ----------
     subject : str
         Name of the subject
-    grade : int
+    grade : int | list
         Resolution of the icosahedral mesh (typically 5). If None, all
         vertices will be used (potentially filling the surface). If a list,
         then values will be morphed to the set of vertices specified in
@@ -2246,8 +2208,8 @@ def grade_to_vertices(subject, grade, subjects_dir=None, n_jobs=1,
         return [np.arange(10242), np.arange(10242)]
     subjects_dir = get_subjects_dir(subjects_dir, raise_error=True)
 
-    spheres_to = [os.path.join(subjects_dir, subject, 'surf',
-                               xh + '.sphere.reg') for xh in ['lh', 'rh']]
+    spheres_to = [op.join(subjects_dir, subject, 'surf',
+                          xh + '.sphere.reg') for xh in ['lh', 'rh']]
     lhs, rhs = [read_surface(s)[0] for s in spheres_to]
 
     if grade is not None:  # fill a subset of vertices
@@ -2271,6 +2233,14 @@ def grade_to_vertices(subject, grade, subjects_dir=None, n_jobs=1,
                                 for xhs in [lhs, rhs])
             # Make sure the vertices are ordered
             vertices = [np.sort(verts) for verts in vertices]
+            for verts in vertices:
+                if (np.diff(verts) == 0).any():
+                    raise ValueError(
+                        'Cannot use icosahedral grade %s with subject %s, '
+                        'mapping %s vertices onto the high-resolution mesh '
+                        'yields repeated vertices, use a lower grade or a '
+                        'list of vertices from an existing source space'
+                        % (grade, subject, len(verts)))
     else:  # potentially fill the surface
         vertices = [np.arange(lhs.shape[0]), np.arange(rhs.shape[0])]
 

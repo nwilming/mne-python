@@ -18,7 +18,7 @@ from ..io.pick import (channel_type, pick_types, _picks_by_type,
 from ..externals.six import string_types
 from ..defaults import _handle_default
 from .utils import (_draw_proj_checkbox, tight_layout, _check_delayed_ssp,
-                    plt_show, _process_times)
+                    plt_show, _process_times, DraggableColorbar)
 from ..utils import logger, _clean_names, warn
 from ..fixes import partial
 from ..io.pick import pick_info
@@ -26,6 +26,8 @@ from .topo import _plot_evoked_topo
 from .topomap import (_prepare_topo_plot, plot_topomap, _check_outlines,
                       _draw_outlines, _prepare_topomap, _topomap_animation)
 from ..channels import find_layout
+from ..channels.layout import (_pair_grad_sensors, generate_2d_layout,
+                               _auto_topomap_coords)
 
 
 def _butterfly_onpick(event, params):
@@ -71,6 +73,13 @@ def _butterfly_onselect(xmin, xmax, ch_types, evoked, text=None):
     """Function for drawing topomaps from the selected area."""
     import matplotlib.pyplot as plt
     ch_types = [type for type in ch_types if type in ('eeg', 'grad', 'mag')]
+    if ('grad' in ch_types and
+            len(_pair_grad_sensors(evoked.info, topomap_coords=False,
+                                   raise_error=False)) < 2):
+        ch_types.remove('grad')
+        if len(ch_types) == 0:
+            return
+
     vert_lines = list()
     if text is not None:
         text.set_visible(True)
@@ -91,9 +100,8 @@ def _butterfly_onselect(xmin, xmax, ch_types, evoked, text=None):
     fig, axarr = plt.subplots(1, len(ch_types), squeeze=False,
                               figsize=(3 * len(ch_types), 3))
     for idx, ch_type in enumerate(ch_types):
-        picks, pos, merge_grads, _, ch_type = _prepare_topo_plot(evoked,
-                                                                 ch_type,
-                                                                 layout=None)
+        picks, pos, merge_grads, _, ch_type = _prepare_topo_plot(
+            evoked, ch_type, layout=None)
         data = evoked.data[picks, minidx:maxidx]
         if merge_grads:
             from ..channels.layout import _merge_grad_data
@@ -160,7 +168,7 @@ def _plot_evoked(evoked, picks, exclude, unit, show,
                  scalings, titles, axes, plot_type,
                  cmap=None, gfp=False, window_title=None,
                  spatial_colors=False, set_tight_layout=True,
-                 selectable=True):
+                 selectable=True, zorder='unsorted'):
     """Aux function for plot_evoked and plot_evoked_image (cf. docstrings)
 
     Extra param is:
@@ -181,7 +189,10 @@ def _plot_evoked(evoked, picks, exclude, unit, show,
                            ' for interactive SSP selection.')
     if isinstance(gfp, string_types) and gfp != 'only':
         raise ValueError('gfp must be boolean or "only". Got %s' % gfp)
-
+    if cmap == 'interactive':
+        cmap = (None, True)
+    elif not isinstance(cmap, tuple):
+        cmap = (cmap, True)
     scalings = _handle_default('scalings', scalings)
     titles = _handle_default('titles', titles)
     units = _handle_default('units', units)
@@ -290,31 +301,54 @@ def _plot_evoked(evoked, picks, exclude, unit, show,
                         else:
                             layout = find_layout(info, None, exclude=[])
                         # drop channels that are not in the data
-
                         used_nm = np.array(_clean_names(info['ch_names']))[idx]
                         names = np.asarray([name for name in used_nm
                                             if name in layout.names])
                         name_idx = [layout.names.index(name) for name in names]
                         if len(name_idx) < len(chs):
                             warn('Could not find layout for all the channels. '
-                                 'Legend for spatial colors not drawn.')
-                        else:
-                            # find indices for bads
-                            bads = [np.where(names == bad)[0][0] for bad in
-                                    info['bads'] if bad in names]
-                            pos, outlines = _check_outlines(layout.pos[:, :2],
-                                                            'skirt', None)
-                            pos = pos[name_idx]
-                            _plot_legend(pos, colors, ax, bads, outlines)
+                                 'Generating custom layout from channel '
+                                 'positions.')
+                            xy = _auto_topomap_coords(info, idx, True)
+                            layout = generate_2d_layout(
+                                xy[idx], ch_names=list(used_nm), name='custom')
+                            names = used_nm
+                            name_idx = [layout.names.index(name) for name in
+                                        names]
+
+                        # find indices for bads
+                        bads = [np.where(names == bad)[0][0] for bad in
+                                info['bads'] if bad in names]
+                        pos, outlines = _check_outlines(layout.pos[:, :2],
+                                                        'skirt', None)
+                        pos = pos[name_idx]
+                        _plot_legend(pos, colors, ax, bads, outlines)
                     else:
                         colors = ['k'] * len(idx)
                         for i in bad_ch_idx:
                             if i in idx:
                                 colors[idx.index(i)] = 'r'
-                    for ch_idx in range(len(D)):
-                        line_list.append(ax.plot(times, D[ch_idx], picker=3.,
-                                                 zorder=1,
-                                                 color=colors[ch_idx])[0])
+
+                    if zorder == 'std':
+                        # find the channels with the least activity
+                        # to map them in front of the more active ones
+                        z_ord = D.std(axis=1).argsort()
+                    elif zorder == 'unsorted':
+                        z_ord = list(range(D.shape[0]))
+                    elif not callable(zorder):
+                        error = ('`zorder` must be a function, "std" '
+                                 'or "unsorted", not {0}.')
+                        raise TypeError(error.format(type(zorder)))
+                    else:
+                        z_ord = zorder(D)
+
+                    # plot channels
+                    for ch_idx, z in enumerate(z_ord):
+                        line_list.append(
+                            ax.plot(times, D[ch_idx], picker=3.,
+                                    zorder=z + 1 if spatial_colors else 1,
+                                    color=colors[ch_idx])[0])
+
                 if gfp:  # 'only' or boolean True
                     gfp_color = 3 * (0.,) if spatial_colors else (0., 1., 0.)
                     this_gfp = np.sqrt((D * D).mean(axis=0))
@@ -349,9 +383,11 @@ def _plot_evoked(evoked, picks, exclude, unit, show,
             elif plot_type == 'image':
                 im = ax.imshow(D, interpolation='nearest', origin='lower',
                                extent=[times[0], times[-1], 0, D.shape[0]],
-                               aspect='auto', cmap=cmap)
+                               aspect='auto', cmap=cmap[0])
                 cbar = plt.colorbar(im, ax=ax)
                 cbar.ax.set_title(ch_unit)
+                if cmap[1]:
+                    ax.CB = DraggableColorbar(cbar, im)
                 ax.set_ylabel('channels (%s)' % 'index')
             else:
                 raise ValueError("plot_type has to be 'butterfly' or 'image'."
@@ -407,7 +443,8 @@ def _plot_evoked(evoked, picks, exclude, unit, show,
 def plot_evoked(evoked, picks=None, exclude='bads', unit=True, show=True,
                 ylim=None, xlim='tight', proj=False, hline=None, units=None,
                 scalings=None, titles=None, axes=None, gfp=False,
-                window_title=None, spatial_colors=False, selectable=True):
+                window_title=None, spatial_colors=False, zorder='unsorted',
+                selectable=True):
     """Plot evoked data using butteryfly plots
 
     Left click to a line shows the channel name. Selecting an area by clicking
@@ -464,6 +501,20 @@ def plot_evoked(evoked, picks=None, exclude='bads', unit=True, show=True,
         coordinates into color values. Spatially similar channels will have
         similar colors. Bad channels will be dotted. If False, the good
         channels are plotted black and bad channels red. Defaults to False.
+    zorder : str | callable
+        Which channels to put in the front or back. Only matters if
+        `spatial_colors` is used.
+        If str, must be `std` or `unsorted` (defaults to `unsorted`). If
+        `std`, data with the lowest standard deviation (weakest effects) will
+        be put in front so that they are not obscured by those with stronger
+        effects. If `unsorted`, channels are z-sorted as in the evoked
+        instance.
+        If callable, must take one argument: a numpy array of the same
+        dimensionality as the evoked raw data; and return a list of
+        unique integers corresponding to the number of channels.
+
+        .. versionadded:: 0.13.0
+
     selectable : bool
         Whether to use interactive features. If True (default), it is possible
         to paint an area to draw topomaps. When False, the interactive features
@@ -482,7 +533,8 @@ def plot_evoked(evoked, picks=None, exclude='bads', unit=True, show=True,
                         hline=hline, units=units, scalings=scalings,
                         titles=titles, axes=axes, plot_type="butterfly",
                         gfp=gfp, window_title=window_title,
-                        spatial_colors=spatial_colors, selectable=selectable)
+                        spatial_colors=spatial_colors, zorder=zorder,
+                        selectable=selectable)
 
 
 def plot_evoked_topo(evoked, layout=None, layout_scale=0.945, color=None,
@@ -648,8 +700,15 @@ def plot_evoked_image(evoked, picks=None, exclude='bads', unit=True, show=True,
         The axes to plot to. If list, the list must be a list of Axes of
         the same length as the number of channel types. If instance of
         Axes, there must be only one channel type plotted.
-    cmap : matplotlib colormap
-        Colormap.
+    cmap : matplotlib colormap | (colormap, bool) | 'interactive'
+        Colormap. If tuple, the first value indicates the colormap to use and
+        the second value is a boolean defining interactivity. In interactive
+        mode the colors are adjustable by clicking and dragging the colorbar
+        with left and right mouse button. Left mouse button moves the scale up
+        and down and right mouse button adjusts the range. Hitting space bar
+        resets the scale. Up and down arrows can be used to change the
+        colormap. If 'interactive', translates to ('RdBu_r', True). Defaults to
+        'RdBu_r'.
 
     Returns
     -------
@@ -1001,9 +1060,9 @@ def plot_evoked_joint(evoked, times="peaks", title='', picks=None,
     ts_args : None | dict
         A dict of `kwargs` that are forwarded to `evoked.plot` to
         style the butterfly plot. `axes` and `show` are ignored.
-        If `spatial_colors` is not in this dict, `spatial_colors=True`
-        will be passed. Beyond that, if ``None``, no customizable arguments
-        will be passed. Defaults to ``None``.
+        If `spatial_colors` is not in this dict, `spatial_colors=True`,
+        and (if it is not in the dict) `zorder='std'` will be passed.
+        Defaults to ``None``.
     topomap_args : None | dict
         A dict of `kwargs` that are forwarded to `evoked.plot_topomap`
         to style the topomaps. `axes` and `show` are ignored. If `times`
@@ -1082,7 +1141,7 @@ def plot_evoked_joint(evoked, times="peaks", title='', picks=None,
     ts_args_def = dict(picks=None, unit=True, ylim=None, xlim='tight',
                        proj=False, hline=None, units=None, scalings=None,
                        titles=None, gfp=False, window_title=None,
-                       spatial_colors=True)
+                       spatial_colors=True, zorder='std')
     for key in ts_args_def:
         if key not in ts_args:
             ts_args_pass[key] = ts_args_def[key]

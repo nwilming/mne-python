@@ -103,7 +103,7 @@ mne.set_log_level('INFO')
 # You can set the default level by setting the environment variable
 # "MNE_LOGGING_LEVEL", or by having mne-python write preferences to a file:
 
-mne.set_config('MNE_LOGGING_LEVEL', 'WARNING')
+mne.set_config('MNE_LOGGING_LEVEL', 'WARNING', set_env=True)
 
 ##############################################################################
 # Note that the location of the mne-python preferences file (for easier manual
@@ -170,7 +170,7 @@ print(events[:5])
 # system (e.g., a newer system that uses channel 'STI101' by default), you can
 # use the following to set the default stim channel to use for finding events:
 
-mne.set_config('MNE_STIM_CHANNEL', 'STI101')
+mne.set_config('MNE_STIM_CHANNEL', 'STI101', set_env=True)
 
 ##############################################################################
 # Events are stored as 2D numpy array where the first column is the time
@@ -276,9 +276,36 @@ evoked2 = mne.read_evokeds(
     evoked_fname, condition='Right Auditory', baseline=(None, 0), proj=True)
 
 ##############################################################################
-# Compute a contrast:
+# Two evoked objects can be contrasted using :func:`mne.combine_evoked`.
+# This function can use ``weights='equal'``, which provides a simple
+# element-by-element subtraction (and sets the
+# :attr:`mne.Evoked.nave` attribute properly based on the underlying number
+# of trials) using either equivalent call:
 
-contrast = evoked1 - evoked2
+contrast = mne.combine_evoked([evoked1, evoked2], weights=[0.5, -0.5])
+contrast = mne.combine_evoked([evoked1, -evoked2], weights='equal')
+print(contrast)
+
+##############################################################################
+# To do a weighted sum based on the number of averages, which will give
+# you what you would have gotten from pooling all trials together in
+# :class:`mne.Epochs` before creating the :class:`mne.Evoked` instance,
+# you can use ``weights='nave'``:
+
+average = mne.combine_evoked([evoked1, evoked2], weights='nave')
+print(contrast)
+
+##############################################################################
+# Instead of dealing with mismatches in the number of averages, we can use
+# trial-count equalization before computing a contrast, which can have some
+# benefits in inverse imaging (note that here ``weights='nave'`` will
+# give the same result as ``weights='equal'``):
+
+epochs_eq = epochs.copy().equalize_event_counts(['aud_l', 'aud_r'])[0]
+evoked1, evoked2 = epochs_eq['aud_l'].average(), epochs_eq['aud_r'].average()
+print(evoked1)
+print(evoked2)
+contrast = mne.combine_evoked([evoked1, -evoked2], weights='equal')
 print(contrast)
 
 ##############################################################################

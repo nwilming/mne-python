@@ -46,12 +46,10 @@ bad_file_works = op.join(base_dir, 'test_bads.txt')
 bad_file_wrong = op.join(base_dir, 'test_wrong_bads.txt')
 hp_fname = op.join(base_dir, 'test_chpi_raw_hp.txt')
 hp_fif_fname = op.join(base_dir, 'test_chpi_raw_sss.fif')
-rng = np.random.RandomState(0)
 
 
 def test_fix_types():
-    """Test fixing of channel types
-    """
+    """Test fixing of channel types"""
     for fname, change in ((hp_fif_fname, True), (test_fif_fname, False),
                           (ctf_fname, False)):
         raw = Raw(fname)
@@ -75,8 +73,7 @@ def test_fix_types():
 
 
 def test_concat():
-    """Test RawFIF concatenation
-    """
+    """Test RawFIF concatenation"""
     # we trim the file to save lots of memory and some time
     tempdir = _TempDir()
     raw = read_raw_fif(test_fif_fname)
@@ -89,12 +86,14 @@ def test_concat():
 
 @testing.requires_testing_data
 def test_hash_raw():
-    """Test hashing raw objects
-    """
+    """Test hashing raw objects"""
     raw = read_raw_fif(fif_fname)
     assert_raises(RuntimeError, raw.__hash__)
     raw = Raw(fif_fname).crop(0, 0.5, copy=False)
+    raw_size = raw._size
     raw.load_data()
+    raw_load_size = raw._size
+    assert_true(raw_size < raw_load_size)
     raw_2 = Raw(fif_fname).crop(0, 0.5, copy=False)
     raw_2.load_data()
     assert_equal(hash(raw), hash(raw_2))
@@ -107,8 +106,7 @@ def test_hash_raw():
 
 @testing.requires_testing_data
 def test_maxshield():
-    """Test maxshield warning
-    """
+    """Test maxshield warning"""
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter('always')
         Raw(ms_fname, allow_maxshield=True)
@@ -118,8 +116,7 @@ def test_maxshield():
 
 @testing.requires_testing_data
 def test_subject_info():
-    """Test reading subject information
-    """
+    """Test reading subject information"""
     tempdir = _TempDir()
     raw = Raw(fif_fname).crop(0, 1, copy=False)
     assert_true(raw.info['subject_info'] is None)
@@ -141,8 +138,7 @@ def test_subject_info():
 
 @testing.requires_testing_data
 def test_copy_append():
-    """Test raw copying and appending combinations
-    """
+    """Test raw copying and appending combinations"""
     raw = Raw(fif_fname, preload=True).copy()
     raw_full = Raw(fif_fname)
     raw_full.append(raw)
@@ -153,8 +149,7 @@ def test_copy_append():
 @slow_test
 @testing.requires_testing_data
 def test_rank_estimation():
-    """Test raw rank estimation
-    """
+    """Test raw rank estimation"""
     iter_tests = itt.product(
         [fif_fname, hp_fif_fname],  # sss
         ['norm', dict(mag=1e11, grad=1e9, eeg=1e5)]
@@ -196,8 +191,7 @@ def test_rank_estimation():
 
 @testing.requires_testing_data
 def test_output_formats():
-    """Test saving and loading raw data using multiple formats
-    """
+    """Test saving and loading raw data using multiple formats"""
     tempdir = _TempDir()
     formats = ['short', 'int', 'single', 'double']
     tols = [1e-4, 1e-7, 1e-7, 1e-15]
@@ -227,8 +221,7 @@ def _compare_combo(raw, new, times, n_times):
 @slow_test
 @testing.requires_testing_data
 def test_multiple_files():
-    """Test loading multiple files simultaneously
-    """
+    """Test loading multiple files simultaneously"""
     # split file
     tempdir = _TempDir()
     raw = Raw(fif_fname).crop(0, 10, copy=False)
@@ -354,8 +347,7 @@ def test_multiple_files():
 
 @testing.requires_testing_data
 def test_split_files():
-    """Test writing and reading of split raw files
-    """
+    """Test writing and reading of split raw files"""
     tempdir = _TempDir()
     raw_1 = Raw(fif_fname, preload=True)
     # Test a very close corner case
@@ -442,8 +434,7 @@ def test_split_files():
 
 
 def test_load_bad_channels():
-    """Test reading/writing of bad channels
-    """
+    """Test reading/writing of bad channels"""
     tempdir = _TempDir()
     # Load correctly marked file (manually done in mne_process_raw)
     raw_marked = Raw(fif_bad_marked_fname)
@@ -485,8 +476,8 @@ def test_load_bad_channels():
 @slow_test
 @testing.requires_testing_data
 def test_io_raw():
-    """Test IO for raw data (Neuromag + CTF + gz)
-    """
+    """Test IO for raw data (Neuromag + CTF + gz)"""
+    rng = np.random.RandomState(0)
     tempdir = _TempDir()
     # test unicode io
     for chars in [b'\xc3\xa4\xc3\xb6\xc3\xa9', b'a']:
@@ -600,8 +591,7 @@ def test_io_raw():
 
 @testing.requires_testing_data
 def test_io_complex():
-    """Test IO with complex data types
-    """
+    """Test IO with complex data types"""
     rng = np.random.RandomState(0)
     tempdir = _TempDir()
     dtypes = [np.complex64, np.complex128]
@@ -640,8 +630,7 @@ def test_io_complex():
 
 @testing.requires_testing_data
 def test_getitem():
-    """Test getitem/indexing of Raw
-    """
+    """Test getitem/indexing of Raw"""
     for preload in [False, True, 'memmap.dat']:
         raw = Raw(fif_fname, preload=preload)
         data, times = raw[0, :]
@@ -663,8 +652,7 @@ def test_getitem():
 
 @testing.requires_testing_data
 def test_proj():
-    """Test SSP proj operations
-    """
+    """Test SSP proj operations"""
     tempdir = _TempDir()
     for proj in [True, False]:
         raw = Raw(fif_fname, preload=False, proj=proj)
@@ -734,9 +722,9 @@ def test_proj():
 
 @testing.requires_testing_data
 def test_preload_modify():
-    """Test preloading and modifying data
-    """
+    """Test preloading and modifying data"""
     tempdir = _TempDir()
+    rng = np.random.RandomState(0)
     for preload in [False, True, 'memmap.dat']:
         raw = Raw(fif_fname, preload=preload)
 
@@ -765,21 +753,22 @@ def test_preload_modify():
 @slow_test
 @testing.requires_testing_data
 def test_filter():
-    """Test filtering (FIR and IIR) and Raw.apply_function interface
-    """
+    """Test filtering (FIR and IIR) and Raw.apply_function interface"""
     raw = Raw(fif_fname).crop(0, 7, copy=False)
     raw.load_data()
-    sig_dec = 11
     sig_dec_notch = 12
     sig_dec_notch_fit = 12
     picks_meg = pick_types(raw.info, meg=True, exclude='bads')
     picks = picks_meg[:4]
 
-    filter_params = dict(picks=picks, n_jobs=2)
-    raw_lp = raw.copy().filter(0., 4.0 - 0.25, **filter_params)
-    raw_hp = raw.copy().filter(8.0 + 0.25, None, **filter_params)
-    raw_bp = raw.copy().filter(4.0 + 0.25, 8.0 - 0.25, **filter_params)
-    raw_bs = raw.copy().filter(8.0 + 0.25, 4.0 - 0.25, **filter_params)
+    trans = 2.0
+    filter_params = dict(picks=picks, filter_length='auto',
+                         h_trans_bandwidth=trans, l_trans_bandwidth=trans,
+                         phase='zero', fir_window='hamming')
+    raw_lp = raw.copy().filter(None, 8.0, **filter_params)
+    raw_hp = raw.copy().filter(16.0, None, **filter_params)
+    raw_bp = raw.copy().filter(8.0 + trans, 16.0 - trans, **filter_params)
+    raw_bs = raw.copy().filter(16.0, 8.0, **filter_params)
 
     data, _ = raw[picks, :]
 
@@ -788,11 +777,14 @@ def test_filter():
     bp_data, _ = raw_bp[picks, :]
     bs_data, _ = raw_bs[picks, :]
 
-    assert_array_almost_equal(data, lp_data + bp_data + hp_data, sig_dec)
-    assert_array_almost_equal(data, bp_data + bs_data, sig_dec)
+    tols = dict(atol=1e-20, rtol=1e-5)
+    assert_allclose(bs_data, lp_data + hp_data, **tols)
+    assert_allclose(data, lp_data + bp_data + hp_data, **tols)
+    assert_allclose(data, bp_data + bs_data, **tols)
 
-    filter_params_iir = dict(picks=picks, n_jobs=2, method='iir')
-    raw_lp_iir = raw.copy().filter(0., 4.0, **filter_params_iir)
+    filter_params_iir = dict(picks=picks, n_jobs=2, method='iir',
+                             iir_params=dict(output='ba'))
+    raw_lp_iir = raw.copy().filter(None, 4.0, **filter_params_iir)
     raw_hp_iir = raw.copy().filter(8.0, None, **filter_params_iir)
     raw_bp_iir = raw.copy().filter(4.0, 8.0, **filter_params_iir)
     del filter_params_iir
@@ -800,8 +792,7 @@ def test_filter():
     hp_data_iir, _ = raw_hp_iir[picks, :]
     bp_data_iir, _ = raw_bp_iir[picks, :]
     summation = lp_data_iir + hp_data_iir + bp_data_iir
-    assert_array_almost_equal(data[:, 100:-100], summation[:, 100:-100],
-                              sig_dec)
+    assert_array_almost_equal(data[:, 100:-100], summation[:, 100:-100], 11)
 
     # make sure we didn't touch other channels
     data, _ = raw[picks_meg[4:], :]
@@ -812,7 +803,7 @@ def test_filter():
 
     # ... and that inplace changes are inplace
     raw_copy = raw.copy()
-    raw_copy.filter(None, 20., picks=picks, n_jobs=2)
+    raw_copy.filter(None, 20., n_jobs=2, **filter_params)
     assert_true(raw._data[0, 0] != raw_copy._data[0, 0])
     assert_equal(raw.copy().filter(None, 20., **filter_params)._data,
                  raw_copy._data)
@@ -820,10 +811,11 @@ def test_filter():
     # do a very simple check on line filtering
     with warnings.catch_warnings(record=True):
         warnings.simplefilter('always')
-        raw_bs = raw.copy().filter(60.0 + 0.5, 60.0 - 0.5, **filter_params)
+        raw_bs = raw.copy().filter(60.0 + trans, 60.0 - trans, **filter_params)
         data_bs, _ = raw_bs[picks, :]
         raw_notch = raw.copy().notch_filter(
-            60.0, picks=picks, n_jobs=2, method='fft')
+            60.0, picks=picks, n_jobs=2, method='fir', filter_length='auto',
+            trans_bandwidth=2 * trans)
     data_notch, _ = raw_notch[picks, :]
     assert_array_almost_equal(data_bs, data_notch, sig_dec_notch)
 
@@ -833,6 +825,38 @@ def test_filter():
     data_notch, _ = raw_notch[picks, :]
     data, _ = raw[picks, :]
     assert_array_almost_equal(data, data_notch, sig_dec_notch_fit)
+
+    # filter should set the "lowpass" and "highpass" parameters
+    raw = RawArray(np.random.randn(3, 1000),
+                   create_info(3, 1000., ['eeg'] * 2 + ['stim']))
+    raw.info['lowpass'] = raw.info['highpass'] = None
+    for kind in ('none', 'lowpass', 'highpass', 'bandpass', 'bandstop'):
+        print(kind)
+        h_freq = l_freq = None
+        if kind in ('lowpass', 'bandpass'):
+            h_freq = 70
+        if kind in ('highpass', 'bandpass'):
+            l_freq = 30
+        if kind == 'bandstop':
+            l_freq, h_freq = 70, 30
+        assert_true(raw.info['lowpass'] is None)
+        assert_true(raw.info['highpass'] is None)
+        kwargs = dict(l_trans_bandwidth=20, h_trans_bandwidth=20,
+                      filter_length='auto', phase='zero', fir_window='hann')
+        raw_filt = raw.copy().filter(l_freq, h_freq, picks=np.arange(1),
+                                     **kwargs)
+        assert_true(raw.info['lowpass'] is None)
+        assert_true(raw.info['highpass'] is None)
+        raw_filt = raw.copy().filter(l_freq, h_freq, **kwargs)
+        wanted_h = h_freq if kind != 'bandstop' else None
+        wanted_l = l_freq if kind != 'bandstop' else None
+        assert_equal(raw_filt.info['lowpass'], wanted_h)
+        assert_equal(raw_filt.info['highpass'], wanted_l)
+        # Using all data channels should still set the params (GH#3259)
+        raw_filt = raw.copy().filter(l_freq, h_freq, picks=np.arange(2),
+                                     **kwargs)
+        assert_equal(raw_filt.info['lowpass'], wanted_h)
+        assert_equal(raw_filt.info['highpass'], wanted_l)
 
 
 def test_filter_picks():
@@ -849,11 +873,9 @@ def test_filter_picks():
         picks = dict((ch, ch == ch_type) for ch in ch_types)
         picks['meg'] = ch_type if ch_type in ('mag', 'grad') else False
         raw_ = raw.copy().pick_types(**picks)
-        # Avoid RuntimeWarning due to Attenuation
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter('always')
-            raw_.filter(10, 30)
-        assert_true(any(['Attenuation' in str(ww.message) for ww in w]))
+        raw_.filter(10, 30, l_trans_bandwidth='auto',
+                    h_trans_bandwidth='auto', filter_length='auto',
+                    phase='zero', fir_window='hamming')
 
     # -- Error if no data channel
     for ch_type in ('misc', 'stim'):
@@ -864,8 +886,7 @@ def test_filter_picks():
 
 @testing.requires_testing_data
 def test_crop():
-    """Test cropping raw files
-    """
+    """Test cropping raw files"""
     # split a concatenated file to test a difficult case
     raw = concatenate_raws([Raw(f) for f in [fif_fname, fif_fname]])
     split_size = 10.  # in seconds
@@ -915,8 +936,7 @@ def test_crop():
 
 @testing.requires_testing_data
 def test_resample():
-    """Test resample (with I/O and multiple files)
-    """
+    """Test resample (with I/O and multiple files)"""
     tempdir = _TempDir()
     raw = Raw(fif_fname).crop(0, 3, copy=False)
     raw.load_data()
@@ -1029,24 +1049,26 @@ def test_resample():
 
 @testing.requires_testing_data
 def test_hilbert():
-    """Test computation of analytic signal using hilbert
-    """
+    """Test computation of analytic signal using hilbert"""
     raw = Raw(fif_fname, preload=True)
     picks_meg = pick_types(raw.info, meg=True, exclude='bads')
     picks = picks_meg[:4]
 
     raw_filt = raw.copy()
-    raw_filt.filter(10, 20)
+    raw_filt.filter(10, 20, picks=picks, l_trans_bandwidth='auto',
+                    h_trans_bandwidth='auto', filter_length='auto',
+                    phase='zero', fir_window='blackman')
     raw_filt_2 = raw_filt.copy()
 
     raw2 = raw.copy()
     raw3 = raw.copy()
-    raw.apply_hilbert(picks)
-    raw2.apply_hilbert(picks, envelope=True, n_jobs=2)
+    raw.apply_hilbert(picks, n_fft='auto')
+    raw2.apply_hilbert(picks, n_fft='auto', envelope=True)
 
     # Test custom n_fft
-    raw_filt.apply_hilbert(picks)
-    raw_filt_2.apply_hilbert(picks, n_fft=raw_filt_2.n_times + 1000)
+    raw_filt.apply_hilbert(picks, n_fft='auto')
+    n_fft = 2 ** int(np.ceil(np.log2(raw_filt_2.n_times + 1000)))
+    raw_filt_2.apply_hilbert(picks, n_fft=n_fft)
     assert_equal(raw_filt._data.shape, raw_filt_2._data.shape)
     assert_allclose(raw_filt._data[:, 50:-50], raw_filt_2._data[:, 50:-50],
                     atol=1e-13, rtol=1e-2)
@@ -1059,8 +1081,7 @@ def test_hilbert():
 
 @testing.requires_testing_data
 def test_raw_copy():
-    """Test Raw copy
-    """
+    """Test Raw copy"""
     raw = Raw(fif_fname, preload=True)
     data, _ = raw[:, :]
     copied = raw.copy()
@@ -1093,8 +1114,8 @@ def test_to_data_frame():
 
 
 def test_add_channels():
-    """Test raw splitting / re-appending channel types
-    """
+    """Test raw splitting / re-appending channel types"""
+    rng = np.random.RandomState(0)
     raw = Raw(test_fif_fname).crop(0, 1, copy=False).load_data()
     raw_nopre = Raw(test_fif_fname, preload=False)
     raw_eeg_meg = raw.copy().pick_types(meg=True, eeg=True)
@@ -1116,7 +1137,7 @@ def test_add_channels():
     # Testing force updates
     raw_arr_info = create_info(['1', '2'], raw_meg.info['sfreq'], 'eeg')
     orig_head_t = raw_arr_info['dev_head_t']
-    raw_arr = np.random.randn(2, raw_eeg.n_times)
+    raw_arr = rng.randn(2, raw_eeg.n_times)
     raw_arr = RawArray(raw_arr, raw_arr_info)
     # This should error because of conflicts in Info
     assert_raises(ValueError, raw_meg.copy().add_channels, [raw_arr])
@@ -1166,55 +1187,132 @@ def test_save():
 
 @testing.requires_testing_data
 def test_with_statement():
-    """ Test with statement """
+    """Test with statement"""
     for preload in [True, False]:
         with Raw(fif_fname, preload=preload) as raw_:
             print(raw_)
 
 
 def test_compensation_raw():
-    """Test Raw compensation
-    """
+    """Test Raw compensation"""
     tempdir = _TempDir()
-    raw1 = Raw(ctf_comp_fname, compensation=None)
-    assert_true(raw1.comp is None)
-    data1, times1 = raw1[:, :]
-    raw2 = Raw(ctf_comp_fname, compensation=3)
-    data2, times2 = raw2[:, :]
-    assert_true(raw2.comp is None)  # unchanged (data come with grade 3)
-    assert_array_equal(times1, times2)
-    assert_array_equal(data1, data2)
-    raw3 = Raw(ctf_comp_fname, compensation=1)
-    data3, times3 = raw3[:, :]
-    assert_true(raw3.comp is not None)
-    assert_array_equal(times1, times3)
-    # make sure it's different with a different compensation:
-    assert_true(np.mean(np.abs(data1 - data3)) > 1e-12)
-    assert_raises(ValueError, Raw, ctf_comp_fname, compensation=33)
+    raw_3 = Raw(ctf_comp_fname)
+    assert_equal(raw_3.compensation_grade, 3)
+    data_3, times = raw_3[:, :]
+
+    # data come with grade 3
+    for ii in range(2):
+        raw_3_new = raw_3.copy()
+        if ii == 0:
+            raw_3_new.load_data()
+        raw_3_new.apply_gradient_compensation(3)
+        assert_equal(raw_3_new.compensation_grade, 3)
+        data_new, times_new = raw_3_new[:, :]
+        assert_array_equal(times, times_new)
+        assert_array_equal(data_3, data_new)
+        # deprecated way
+        preload = True if ii == 0 else False
+        raw_3_new = Raw(ctf_comp_fname, compensation=3,
+                        preload=preload, verbose='error')
+        assert_equal(raw_3_new.compensation_grade, 3)
+        data_new, times_new = raw_3_new[:, :]
+        assert_array_equal(times, times_new)
+        assert_array_equal(data_3, data_new)
+
+    # change to grade 0
+    raw_0 = raw_3.copy().apply_gradient_compensation(0)
+    assert_equal(raw_0.compensation_grade, 0)
+    data_0, times_new = raw_0[:, :]
+    assert_array_equal(times, times_new)
+    assert_true(np.mean(np.abs(data_0 - data_3)) > 1e-12)
+    # change to grade 1
+    raw_1 = raw_0.copy().apply_gradient_compensation(1)
+    assert_equal(raw_1.compensation_grade, 1)
+    data_1, times_new = raw_1[:, :]
+    assert_array_equal(times, times_new)
+    assert_true(np.mean(np.abs(data_1 - data_3)) > 1e-12)
+    assert_raises(ValueError, Raw, ctf_comp_fname, compensation=33,
+                  verbose='error')
+    raw_bad = raw_0.copy()
+    raw_bad.add_proj(compute_proj_raw(raw_0, duration=0.5, verbose='error'))
+    raw_bad.apply_proj()
+    assert_raises(RuntimeError, raw_bad.apply_gradient_compensation, 1)
+    # with preload
+    tols = dict(rtol=1e-12, atol=1e-25)
+    raw_1_new = raw_3.copy().load_data().apply_gradient_compensation(1)
+    assert_equal(raw_1_new.compensation_grade, 1)
+    data_1_new, times_new = raw_1_new[:, :]
+    assert_array_equal(times, times_new)
+    assert_true(np.mean(np.abs(data_1_new - data_3)) > 1e-12)
+    assert_allclose(data_1, data_1_new, **tols)
+    # deprecated way
+    for preload in (True, False):
+        raw_1_new = Raw(ctf_comp_fname, compensation=1, verbose='error',
+                        preload=preload)
+        assert_equal(raw_1_new.compensation_grade, 1)
+        data_1_new, times_new = raw_1_new[:, :]
+        assert_array_equal(times, times_new)
+        assert_true(np.mean(np.abs(data_1_new - data_3)) > 1e-12)
+        assert_allclose(data_1, data_1_new, **tols)
+    # change back
+    raw_3_new = raw_1.copy().apply_gradient_compensation(3)
+    data_3_new, times_new = raw_3_new[:, :]
+    assert_allclose(data_3, data_3_new, **tols)
+    raw_3_new = raw_1.copy().load_data().apply_gradient_compensation(3)
+    data_3_new, times_new = raw_3_new[:, :]
+    assert_allclose(data_3, data_3_new, **tols)
+
+    for load in (False, True):
+        for raw in (raw_0, raw_1):
+            raw_3_new = raw.copy()
+            if load:
+                raw_3_new.load_data()
+            raw_3_new.apply_gradient_compensation(3)
+            assert_equal(raw_3_new.compensation_grade, 3)
+            data_3_new, times_new = raw_3_new[:, :]
+            assert_array_equal(times, times_new)
+            assert_true(np.mean(np.abs(data_3_new - data_1)) > 1e-12)
+            assert_allclose(data_3, data_3_new, **tols)
 
     # Try IO with compensation
     temp_file = op.join(tempdir, 'raw.fif')
-
-    raw1.save(temp_file, overwrite=True)
-    raw4 = Raw(temp_file)
-    data4, times4 = raw4[:, :]
-    assert_array_equal(times1, times4)
-    assert_array_equal(data1, data4)
+    raw_3.save(temp_file, overwrite=True)
+    for preload in (True, False):
+        raw_read = read_raw_fif(temp_file, preload=preload)
+        assert_equal(raw_read.compensation_grade, 3)
+        data_read, times_new = raw_read[:, :]
+        assert_array_equal(times, times_new)
+        assert_allclose(data_3, data_read, **tols)
+        raw_read.apply_gradient_compensation(1)
+        data_read, times_new = raw_read[:, :]
+        assert_array_equal(times, times_new)
+        assert_allclose(data_1, data_read, **tols)
 
     # Now save the file that has modified compensation
-    # and make sure we can the same data as input ie. compensation
-    # is undone
-    raw3.save(temp_file, overwrite=True)
-    raw5 = Raw(temp_file)
-    data5, times5 = raw5[:, :]
-    assert_array_equal(times1, times5)
-    assert_allclose(data1, data5, rtol=1e-12, atol=1e-22)
+    # and make sure the compensation is the same as it was,
+    # but that we can undo it
+
+    # These channels have norm 1e-11/1e-12, so atol=1e-18 isn't awesome,
+    # but it's due to the single precision of the info['comps'] leading
+    # to inexact inversions with saving/loading (casting back to single)
+    # in between (e.g., 1->3->1 will degrade like this)
+    looser_tols = dict(rtol=1e-6, atol=1e-18)
+    raw_1.save(temp_file, overwrite=True)
+    for preload in (True, False):
+        raw_read = read_raw_fif(temp_file, preload=preload, verbose=True)
+        assert_equal(raw_read.compensation_grade, 1)
+        data_read, times_new = raw_read[:, :]
+        assert_array_equal(times, times_new)
+        assert_allclose(data_1, data_read, **looser_tols)
+        raw_read.apply_gradient_compensation(3, verbose=True)
+        data_read, times_new = raw_read[:, :]
+        assert_array_equal(times, times_new)
+        assert_allclose(data_3, data_read, **looser_tols)
 
 
 @requires_mne
 def test_compensation_raw_mne():
-    """Test Raw compensation by comparing with MNE
-    """
+    """Test Raw compensation by comparing with MNE"""
     tempdir = _TempDir()
 
     def compensate_mne(fname, grad):
@@ -1225,7 +1323,8 @@ def test_compensation_raw_mne():
         return Raw(tmp_fname, preload=True)
 
     for grad in [0, 2, 3]:
-        raw_py = Raw(ctf_comp_fname, preload=True, compensation=grad)
+        with warnings.catch_warnings(record=True):  # deprecated param
+            raw_py = Raw(ctf_comp_fname, preload=True, compensation=grad)
         raw_c = compensate_mne(ctf_comp_fname, grad)
         assert_allclose(raw_py._data, raw_c._data, rtol=1e-6, atol=1e-17)
         assert_equal(raw_py.info['nchan'], raw_c.info['nchan'])
@@ -1239,8 +1338,7 @@ def test_compensation_raw_mne():
 
 @testing.requires_testing_data
 def test_drop_channels_mixin():
-    """Test channels-dropping functionality
-    """
+    """Test channels-dropping functionality"""
     raw = Raw(fif_fname, preload=True)
     drop_ch = raw.ch_names[:3]
     ch_names = raw.ch_names[3:]
@@ -1259,8 +1357,7 @@ def test_drop_channels_mixin():
 
 @testing.requires_testing_data
 def test_pick_channels_mixin():
-    """Test channel-picking functionality
-    """
+    """Test channel-picking functionality"""
     # preload is True
 
     raw = Raw(fif_fname, preload=True)
@@ -1285,8 +1382,7 @@ def test_pick_channels_mixin():
 
 @testing.requires_testing_data
 def test_equalize_channels():
-    """Test equalization of channels
-    """
+    """Test equalization of channels"""
     raw1 = Raw(fif_fname, preload=True)
 
     raw2 = raw1.copy()

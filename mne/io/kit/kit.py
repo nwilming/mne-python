@@ -18,7 +18,7 @@ from scipy import linalg
 from ..pick import pick_types
 from ...coreg import fit_matched_points, _decimate_points
 from ...utils import verbose, logger, warn
-from ...transforms import (apply_trans, als_ras_trans, als_ras_trans_mm,
+from ...transforms import (apply_trans, als_ras_trans,
                            get_ras_to_neuromag_trans, Transform)
 from ..base import _BaseRaw
 from ..utils import _mult_cal_one
@@ -504,8 +504,8 @@ def _set_dig_kit(mrk, elp, hsp):
     if isinstance(mrk, string_types):
         mrk = read_mrk(mrk)
 
-    hsp = apply_trans(als_ras_trans_mm, hsp)
-    elp = apply_trans(als_ras_trans_mm, elp)
+    hsp = apply_trans(als_ras_trans, hsp)
+    elp = apply_trans(als_ras_trans, elp)
     mrk = apply_trans(als_ras_trans, mrk)
 
     nasion, lpa, rpa = elp[:3]
@@ -558,6 +558,7 @@ def get_kit_info(rawfile):
                                       "contact the MNE-Python developers."
                                       % (sysname, sysid))
         KIT_SYS = KIT_CONSTANTS[sysid]
+        logger.info("KIT-System ID %i: %s" % (sysid, sysname))
         if sysid in SYSNAMES:
             if sysname != SYSNAMES[sysid]:
                 warn("KIT file %s has system-name %r, expected %r"
@@ -659,7 +660,7 @@ def get_kit_info(rawfile):
         info = _empty_info(float(sqd['sfreq']))
         info.update(meas_date=int(time.time()), lowpass=sqd['lowpass'],
                     highpass=sqd['highpass'], filename=rawfile,
-                    buffer_size_sec=1.)
+                    buffer_size_sec=1., kit_system_id=sysid)
 
         # Creates a list of dicts of meg channels for raw.info
         logger.info('Setting channel info structure...')

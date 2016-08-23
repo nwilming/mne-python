@@ -4,10 +4,12 @@
 Python API Reference
 ====================
 
-This is the classes and functions reference of mne-python. Functions are
+This is the classes and functions reference of MNE-Python. Functions are
 grouped thematically by analysis stage. Functions and classes that are not
 below a module heading are found in the :py:mod:`mne` namespace.
 
+MNE-Python also provides multiple command-line scripts that can be called
+directly from a terminal, see :ref:`python_commands`.
 
 .. contents::
    :local:
@@ -30,6 +32,7 @@ Classes
    Epochs
    Evoked
    SourceSpaces
+   Forward
    SourceEstimate
    VolSourceEstimate
    MixedSourceEstimate
@@ -166,6 +169,7 @@ Functions:
    read_source_spaces
    read_surface
    read_trans
+   read_tri
    save_stc_as_volume
    write_labels_to_annot
    write_bem_solution
@@ -179,7 +183,7 @@ Functions:
    write_source_spaces
    write_surface
    write_trans
-
+   io.read_info
 
 Creating data objects from arrays
 =================================
@@ -327,6 +331,7 @@ Functions:
    plot_evoked_white
    plot_ica_sources
    plot_ica_components
+   plot_ica_properties
    plot_ica_scores
    plot_ica_overlay
    plot_epochs_image
@@ -434,6 +439,7 @@ Functions:
    maxwell_filter
    read_ica
    run_ica
+   corrmap
 
 EEG referencing:
 
@@ -461,6 +467,8 @@ EEG referencing:
 
    band_pass_filter
    construct_iir_filter
+   estimate_ringing_samples
+   filter_data
    high_pass_filter
    low_pass_filter
    notch_filter
@@ -744,6 +752,18 @@ Functions:
 
    fit_dipole
 
+:py:mod:`mne.dipole`:
+
+.. currentmodule:: mne.dipole
+
+Functions:
+
+.. autosummary::
+   :toctree: generated/
+   :template: function.rst
+
+   get_phantom_dipoles
+
 
 Source Space Data
 =================
@@ -793,6 +813,7 @@ Classes:
    :template: class.rst
 
    AverageTFR
+   EpochsTFR
 
 Functions that operate on mne-python objects:
 
@@ -800,7 +821,7 @@ Functions that operate on mne-python objects:
    :toctree: generated/
    :template: function.rst
 
-   compute_epochs_csd
+   csd_epochs
    psd_welch
    psd_multitaper
    fit_iir_model_raw
@@ -816,10 +837,10 @@ Functions that operate on ``np.ndarray`` objects:
    :toctree: generated/
    :template: function.rst
 
+   csd_array
    cwt_morlet
    dpss_windows
    morlet
-   multitaper_psd
    single_trial_power
    stft
    istft

@@ -8,11 +8,14 @@ import os.path as op
 import numpy as np
 
 from nose.tools import assert_true, assert_raises
-from numpy.testing import assert_array_equal
+from numpy.testing import (assert_array_equal, assert_equal,
+                           assert_array_almost_equal)
 
 from mne import io, read_events, Epochs, pick_types
 from mne.decoding import Scaler, FilterEstimator
-from mne.decoding import PSDEstimator, EpochsVectorizer
+from mne.decoding import (PSDEstimator, EpochsVectorizer, Vectorizer,
+                          UnsupervisedSpatialFilter)
+from mne.utils import requires_sklearn
 
 warnings.simplefilter('always')  # enable b/c these tests throw warnings
 
@@ -71,14 +74,18 @@ def test_filterestimator():
     epochs_data = epochs.get_data()
 
     # Add tests for different combinations of l_freq and h_freq
-    filt = FilterEstimator(epochs.info, l_freq=1, h_freq=40)
+    filt = FilterEstimator(epochs.info, l_freq=40, h_freq=80,
+                           filter_length='auto',
+                           l_trans_bandwidth='auto', h_trans_bandwidth='auto')
     y = epochs.events[:, -1]
     with warnings.catch_warnings(record=True):  # stop freq attenuation warning
         X = filt.fit_transform(epochs_data, y)
         assert_true(X.shape == epochs_data.shape)
         assert_array_equal(filt.fit(epochs_data, y).transform(epochs_data), X)
 
-    filt = FilterEstimator(epochs.info, l_freq=0, h_freq=40)
+    filt = FilterEstimator(epochs.info, l_freq=None, h_freq=40,
+                           filter_length='auto',
+                           l_trans_bandwidth='auto', h_trans_bandwidth='auto')
     y = epochs.events[:, -1]
     with warnings.catch_warnings(record=True):  # stop freq attenuation warning
         X = filt.fit_transform(epochs_data, y)
@@ -88,7 +95,9 @@ def test_filterestimator():
     with warnings.catch_warnings(record=True):  # stop freq attenuation warning
         assert_raises(ValueError, filt.fit_transform, epochs_data, y)
 
-    filt = FilterEstimator(epochs.info, l_freq=1, h_freq=None)
+    filt = FilterEstimator(epochs.info, l_freq=40, h_freq=None,
+                           filter_length='auto',
+                           l_trans_bandwidth='auto', h_trans_bandwidth='auto')
     with warnings.catch_warnings(record=True):  # stop freq attenuation warning
         X = filt.fit_transform(epochs_data, y)
 
@@ -160,3 +169,63 @@ def test_epochs_vectorizer():
     # Test init exception
     assert_raises(ValueError, vector.fit, epochs, y)
     assert_raises(ValueError, vector.transform, epochs, y)
+
+
+def test_vectorizer():
+    """Test Vectorizer."""
+    data = np.random.rand(150, 18, 6)
+    vect = Vectorizer()
+    result = vect.fit_transform(data)
+    assert_equal(result.ndim, 2)
+
+    # check inverse_trasnform
+    orig_data = vect.inverse_transform(result)
+    assert_equal(orig_data.ndim, 3)
+    assert_array_equal(orig_data, data)
+    assert_array_equal(vect.inverse_transform(result[1:]), data[1:])
+
+    # check with different shape
+    assert_equal(vect.fit_transform(np.random.rand(150, 18, 6, 3)).shape,
+                 (150, 324))
+    assert_equal(vect.fit_transform(data[1:]).shape, (149, 108))
+
+    # check if raised errors are working correctly
+    vect.fit(np.random.rand(105, 12, 3))
+    assert_raises(ValueError, vect.transform, np.random.rand(105, 12, 3, 1))
+    assert_raises(ValueError, vect.inverse_transform,
+                  np.random.rand(102, 12, 12))
+
+
+@requires_sklearn
+def test_unsupervised_spatial_filter():
+    from sklearn.decomposition import PCA
+    from sklearn.kernel_ridge import KernelRidge
+    raw = io.read_raw_fif(raw_fname, preload=False)
+    events = read_events(event_name)
+    picks = pick_types(raw.info, meg=True, stim=False, ecg=False,
+                       eog=False, exclude='bads')
+    picks = picks[1:13:3]
+    epochs = Epochs(raw, events, event_id, tmin, tmax, picks=picks,
+                    preload=True, baseline=None, verbose=False)
+
+    # Test estimator
+    assert_raises(ValueError, UnsupervisedSpatialFilter, KernelRidge(2))
+
+    # Test fit
+    X = epochs.get_data()
+    n_components = 4
+    usf = UnsupervisedSpatialFilter(PCA(n_components))
+    usf.fit(X)
+    usf1 = UnsupervisedSpatialFilter(PCA(n_components))
+
+    # test transform
+    assert_equal(usf.transform(X).ndim, 3)
+    # test fit_transform
+    assert_array_almost_equal(usf.transform(X), usf1.fit_transform(X))
+    # assert shape
+    assert_equal(usf.transform(X).shape[1], n_components)
+
+    # Test with average param
+    usf = UnsupervisedSpatialFilter(PCA(4), average=True)
+    usf.fit_transform(X)
+    assert_raises(ValueError, UnsupervisedSpatialFilter, PCA(4), 2)
