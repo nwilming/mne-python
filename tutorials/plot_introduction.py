@@ -5,6 +5,8 @@
 Basic MEG and EEG data processing
 =================================
 
+.. image:: http://mne-tools.github.io/stable/_static/mne_logo.png
+
 MNE-Python reimplements most of MNE-C's (the original MNE command line utils)
 functionality and offers transparent scripting.
 On top of that it extends MNE-C's functionality considerably
@@ -48,7 +50,6 @@ What you're not supposed to do with MNE Python
 
     - **Brain and head surface segmentation** for use with BEM
       models -- use Freesurfer.
-    - **Raw movement compensation** -- use Elekta Maxfilter™
 
 
 .. note:: This package is based on the FIF file format from Neuromag. It
@@ -59,10 +60,10 @@ What you're not supposed to do with MNE Python
 Installation of the required materials
 ---------------------------------------
 
-See :ref:`getting_started` with Python.
+See :ref:`install_python_and_mne_python`.
 
 .. note:: The expected location for the MNE-sample data is
-    my-path-to/mne-python/examples. If you downloaded data and an example asks
+    ``~/mne_data``. If you downloaded data and an example asks
     you whether to download it again, make sure
     the data reside in the examples directory and you run the script from its
     current directory.
@@ -79,12 +80,15 @@ From raw data to evoked data
 
 .. _ipython: http://ipython.scipy.org/
 
-Now, launch `ipython`_ (Advanced Python shell) using the QT backend which best
-supported across systems::
+Now, launch `ipython`_ (Advanced Python shell) using the QT backend, which
+is best supported across systems::
 
   $ ipython --matplotlib=qt
 
 First, load the mne package:
+
+.. note:: In IPython, you can press **shift-enter** with a given cell
+          selected to execute it and advance to the next cell:
 """
 
 import mne
@@ -113,7 +117,7 @@ mne.get_config_path()
 
 ##############################################################################
 # By default logging messages print to the console, but look at
-# mne.set_log_file() to save output to a file.
+# :func:`mne.set_log_file` to save output to a file.
 #
 # Access raw data
 # ^^^^^^^^^^^^^^^
@@ -324,7 +328,7 @@ freqs = np.arange(7, 30, 3)  # frequencies of interest
 from mne.time_frequency import tfr_morlet  # noqa
 power, itc = tfr_morlet(epochs, freqs=freqs, n_cycles=n_cycles,
                         return_itc=True, decim=3, n_jobs=1)
-# power.plot()
+power.plot([power.ch_names.index('MEG 1332')])
 
 ##############################################################################
 # Inverse modeling: MNE and dSPM on evoked and raw data

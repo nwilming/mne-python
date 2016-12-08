@@ -31,8 +31,8 @@ from ..io.open import fiff_open
 from ..io.tag import read_tag
 from ..io.meas_info import write_meas_info, read_meas_info
 from ..io.constants import Bunch, FIFF
-from ..io.base import _BaseRaw
-from ..epochs import _BaseEpochs
+from ..io.base import BaseRaw
+from ..epochs import BaseEpochs
 from ..viz import (plot_ica_components, plot_ica_scores,
                    plot_ica_sources, plot_ica_overlay)
 from ..viz.ica import plot_ica_properties
@@ -48,19 +48,19 @@ from ..utils import (check_version, logger, check_fname, verbose,
                      _get_fast_dot, compute_corr, _get_inst_data,
                      copy_function_doc_to_method_doc)
 from ..fixes import _get_args
-from ..filter import band_pass_filter
+from ..filter import filter_data
 from .bads import find_outliers
 from .ctps_ import ctps
 from ..externals.six import string_types, text_type
 from ..io.pick import channel_type
 
 
-__all__ = ['ICA', 'ica_find_ecg_events', 'ica_find_eog_events',
-           'get_score_funcs', 'read_ica', 'run_ica']
+__all__ = ('ICA', 'ica_find_ecg_events', 'ica_find_eog_events',
+           'get_score_funcs', 'read_ica', 'run_ica')
 
 
 def _make_xy_sfunc(func, ndim_output=False):
-    """Aux function"""
+    """Aux function."""
     if ndim_output:
         def sfunc(x, y):
             return np.array([func(a, y.ravel()) for a in x])[:, 0]
@@ -74,7 +74,7 @@ def _make_xy_sfunc(func, ndim_output=False):
 
 # makes score funcs attr accessible for users
 def get_score_funcs():
-    """Helper to get the score functions"""
+    """Get the score functions."""
     from scipy import stats
     from scipy.spatial import distance
     score_funcs = Bunch()
@@ -92,9 +92,10 @@ def get_score_funcs():
 
 
 def _check_for_unsupported_ica_channels(picks, info):
-    """Check for channels in picks that are not considered
-    valid channels. Accepted channels are the data channels
-    ('seeg','ecog','eeg','mag', and 'grad') and 'eog'.
+    """Check for channels in picks that are not considered valid channels.
+
+    Accepted channels are the data channels
+    ('seeg','ecog','eeg', 'hbo', 'hbr', 'mag', and 'grad') and 'eog'.
     This prevents the program from crashing without
     feedback when a bad channel is provided to ICA whitening.
     """
@@ -107,13 +108,13 @@ def _check_for_unsupported_ica_channels(picks, info):
     check = all([ch in types for ch in chs])
     if not check:
         raise ValueError('Invalid channel type(s) passed for ICA.\n'
-                         'Only the following channels are supported {}\n'
-                         'Following types were passed {}\n'
+                         'Only the following channels are supported {0}\n'
+                         'Following types were passed {1}\n'
                          .format(types, chs))
 
 
 class ICA(ContainsMixin):
-    """M/EEG signal decomposition using Independent Component Analysis (ICA)
+    """M/EEG signal decomposition using Independent Component Analysis (ICA).
 
     This object can be used to estimate ICA components and then
     remove some from Raw or Epochs for data exploration or artifact
@@ -170,7 +171,8 @@ class ICA(ContainsMixin):
     max_iter : int, optional
         Maximum number of iterations during fit.
     verbose : bool, str, int, or None
-        If not None, override default verbose level (see mne.verbose).
+        If not None, override default verbose level (see :func:`mne.verbose`
+        and :ref:`Logging documentation <tut_logging>` for more).
 
     Attributes
     ----------
@@ -208,18 +210,19 @@ class ICA(ContainsMixin):
         again. To dump this 'artifact memory' say: ica.exclude = []
     info : None | instance of Info
         The measurement info copied from the object fitted.
-    `n_samples_` : int
+    ``n_samples_`` : int
         the number of samples used on fit.
-    `labels_` : dict
+    ``labels_`` : dict
         A dictionary of independent component indices, grouped by types of
         independent components. This attribute is set by some of the artifact
         detection functions.
     """
+
     @verbose
     def __init__(self, n_components=None, max_pca_components=None,
                  n_pca_components=None, noise_cov=None, random_state=None,
                  method='fastica', fit_params=None, max_iter=200,
-                 verbose=None):
+                 verbose=None):  # noqa: D102
         methods = ('fastica', 'infomax', 'extended-infomax')
         if method not in methods:
             raise ValueError('`method` must be "%s". You passed: "%s"' %
@@ -273,7 +276,7 @@ class ICA(ContainsMixin):
         self.method = method
 
     def __repr__(self):
-        """ICA fit information"""
+        """ICA fit information."""
         if self.current_fit == 'unfitted':
             s = 'no'
         elif self.current_fit == 'raw':
@@ -297,7 +300,7 @@ class ICA(ContainsMixin):
     @verbose
     def fit(self, inst, picks=None, start=None, stop=None, decim=None,
             reject=None, flat=None, tstep=2.0, verbose=None):
-        """Run the ICA decomposition on raw data
+        """Run the ICA decomposition on raw data.
 
         Caveat! If supplying a noise covariance keep track of the projections
         available in the cov, the raw or the epochs object. For example,
@@ -322,7 +325,8 @@ class ICA(ContainsMixin):
             within ``start`` and ``stop`` are used.
         reject : dict | None
             Rejection parameters based on peak-to-peak amplitude.
-            Valid keys are 'grad', 'mag', 'eeg', 'seeg', 'ecog', 'eog', 'ecg'.
+            Valid keys are 'grad', 'mag', 'eeg', 'seeg', 'ecog', 'eog', 'ecg',
+            'hbo', 'hbr'.
             If reject is None then no rejection is done. Example::
 
                 reject = dict(grad=4000e-13, # T / m (gradiometers)
@@ -334,7 +338,8 @@ class ICA(ContainsMixin):
             It only applies if `inst` is of type Raw.
         flat : dict | None
             Rejection parameters based on flatness of signal.
-            Valid keys are 'grad', 'mag', 'eeg', 'seeg', 'ecog', 'eog', 'ecg'.
+            Valid keys are 'grad', 'mag', 'eeg', 'seeg', 'ecog', 'eog', 'ecg',
+            'hbo', 'hbr'.
             Values are floats that set the minimum acceptable peak-to-peak
             amplitude. If flat is None then no rejection is done.
             It only applies if `inst` is of type Raw.
@@ -342,20 +347,21 @@ class ICA(ContainsMixin):
             Length of data chunks for artifact rejection in seconds.
             It only applies if `inst` is of type Raw.
         verbose : bool, str, int, or None
-            If not None, override default verbose level (see mne.verbose).
-            Defaults to self.verbose.
+            If not None, override default verbose level (see
+            :func:`mne.verbose` and :ref:`Logging documentation <tut_logging>`
+            for more). Defaults to self.verbose.
 
         Returns
         -------
         self : instance of ICA
             Returns the modified instance.
         """
-        if isinstance(inst, _BaseRaw) or isinstance(inst, _BaseEpochs):
+        if isinstance(inst, (BaseRaw, BaseEpochs)):
             _check_for_unsupported_ica_channels(picks, inst.info)
-            if isinstance(inst, _BaseRaw):
+            if isinstance(inst, BaseRaw):
                 self._fit_raw(inst, picks, start, stop, decim, reject, flat,
                               tstep, verbose)
-            elif isinstance(inst, _BaseEpochs):
+            elif isinstance(inst, BaseEpochs):
                 self._fit_epochs(inst, picks, decim, verbose)
         else:
             raise ValueError('Data input must be of Raw or Epochs type')
@@ -368,7 +374,7 @@ class ICA(ContainsMixin):
         return self
 
     def _reset(self):
-        """Aux method"""
+        """Aux method."""
         del self._pre_whitener
         del self.unmixing_matrix_
         del self.mixing_matrix_
@@ -382,8 +388,7 @@ class ICA(ContainsMixin):
 
     def _fit_raw(self, raw, picks, start, stop, decim, reject, flat, tstep,
                  verbose):
-        """Aux method
-        """
+        """Aux method."""
         if self.current_fit != 'unfitted':
             self._reset()
 
@@ -425,8 +430,7 @@ class ICA(ContainsMixin):
         return self
 
     def _fit_epochs(self, epochs, picks, decim, verbose):
-        """Aux method
-        """
+        """Aux method."""
         if self.current_fit != 'unfitted':
             self._reset()
 
@@ -464,7 +468,7 @@ class ICA(ContainsMixin):
         return self
 
     def _pre_whiten(self, data, info, picks):
-        """Aux function"""
+        """Aux function."""
         fast_dot = _get_fast_dot()
         has_pre_whitener = hasattr(self, '_pre_whitener')
         if not has_pre_whitener and self.noise_cov is None:
@@ -480,13 +484,15 @@ class ICA(ContainsMixin):
                         this_picks = pick_types(info, meg=False, ecog=True)
                     elif ch_type == 'eeg':
                         this_picks = pick_types(info, meg=False, eeg=True)
-                    elif ch_type in ['mag', 'grad']:
+                    elif ch_type in ('mag', 'grad'):
                         this_picks = pick_types(info, meg=ch_type)
                     elif ch_type == 'eog':
                         this_picks = pick_types(info, meg=False, eog=True)
+                    elif ch_type in ('hbo', 'hbr'):
+                        this_picks = pick_types(info, meg=False, fnirs=ch_type)
                     else:
                         raise RuntimeError('Should not be reached.'
-                                           'Unsupported channel {}'
+                                           'Unsupported channel {0}'
                                            .format(ch_type))
                     pre_whitener[this_picks] = np.std(data[this_picks])
             data /= pre_whitener
@@ -504,8 +510,7 @@ class ICA(ContainsMixin):
         return data, pre_whitener
 
     def _fit(self, data, max_pca_components, fit_type):
-        """Aux function """
-
+        """Aux function."""
         random_state = check_random_state(self.random_state)
 
         if not check_version('sklearn', '0.18'):
@@ -583,7 +588,7 @@ class ICA(ContainsMixin):
         self.current_fit = fit_type
 
     def _transform(self, data):
-        """Compute sources from data (operates inplace)"""
+        """Compute sources from data (operates inplace)."""
         fast_dot = _get_fast_dot()
         if self.pca_mean_ is not None:
             data -= self.pca_mean_[:, None]
@@ -595,6 +600,7 @@ class ICA(ContainsMixin):
         return sources
 
     def _transform_raw(self, raw, start, stop):
+        """Transform raw data."""
         if not hasattr(self, 'mixing_matrix_'):
             raise RuntimeError('No fit available. Please fit ICA.')
         start, stop = _check_start_stop(raw, start, stop)
@@ -612,8 +618,7 @@ class ICA(ContainsMixin):
         return self._transform(data)
 
     def _transform_epochs(self, epochs, concatenate):
-        """Aux method
-        """
+        """Aux method."""
         if not hasattr(self, 'mixing_matrix_'):
             raise RuntimeError('No fit available. Please fit ICA')
 
@@ -638,8 +643,7 @@ class ICA(ContainsMixin):
         return sources
 
     def _transform_evoked(self, evoked):
-        """Aux method
-        """
+        """Aux method."""
         if not hasattr(self, 'mixing_matrix_'):
             raise RuntimeError('No fit available. Please first fit ICA')
 
@@ -659,7 +663,7 @@ class ICA(ContainsMixin):
         return sources
 
     def get_sources(self, inst, add_channels=None, start=None, stop=None):
-        """Estimate sources given the unmixing matrix
+        """Estimate sources given the unmixing matrix.
 
         This method will return the sources in the container format passed.
         Typical usecases:
@@ -687,9 +691,9 @@ class ICA(ContainsMixin):
         sources : instance of Raw, Epochs or Evoked
             The ICA sources time series.
         """
-        if isinstance(inst, _BaseRaw):
+        if isinstance(inst, BaseRaw):
             sources = self._sources_as_raw(inst, add_channels, start, stop)
-        elif isinstance(inst, _BaseEpochs):
+        elif isinstance(inst, BaseEpochs):
             sources = self._sources_as_epochs(inst, add_channels, False)
         elif isinstance(inst, Evoked):
             sources = self._sources_as_evoked(inst, add_channels)
@@ -700,8 +704,7 @@ class ICA(ContainsMixin):
         return sources
 
     def _sources_as_raw(self, raw, add_channels, start, stop):
-        """Aux method
-        """
+        """Aux method."""
         # merge copied instance and picked data with sources
         sources = self._transform_raw(raw, start=start, stop=stop)
         if raw.preload:  # get data and temporarily delete
@@ -723,7 +726,7 @@ class ICA(ContainsMixin):
             _, times_ = raw[0, start:stop]
         out._data = data_
         out._times = times_
-        out._filenames = list()
+        out._filenames = [None]
         out.preload = True
 
         # update first and last samples
@@ -739,7 +742,7 @@ class ICA(ContainsMixin):
         return out
 
     def _sources_as_epochs(self, epochs, add_channels, concatenate):
-        """Aux method"""
+        """Aux method."""
         out = epochs.copy()
         sources = self._transform_epochs(epochs, concatenate)
         if add_channels is not None:
@@ -757,8 +760,7 @@ class ICA(ContainsMixin):
         return out
 
     def _sources_as_evoked(self, evoked, add_channels):
-        """Aux method
-        """
+        """Aux method."""
         if add_channels is not None:
             picks = [evoked.ch_names.index(k) for k in add_channels]
         else:
@@ -776,8 +778,7 @@ class ICA(ContainsMixin):
         return out
 
     def _export_info(self, info, container, add_channels):
-        """Aux method
-        """
+        """Aux method."""
         # set channel names and info
         ch_names = []
         ch_info = info['chs'] = []
@@ -807,7 +808,7 @@ class ICA(ContainsMixin):
     def score_sources(self, inst, target=None, score_func='pearsonr',
                       start=None, stop=None, l_freq=None, h_freq=None,
                       verbose=None):
-        """Assign score to components based on statistic or metric
+        """Assign score to components based on statistic or metric.
 
         Parameters
         ----------
@@ -839,17 +840,18 @@ class ICA(ContainsMixin):
         h_freq : float
             High pass frequency.
         verbose : bool, str, int, or None
-            If not None, override default verbose level (see mne.verbose).
-            Defaults to self.verbose.
+            If not None, override default verbose level (see
+            :func:`mne.verbose` and :ref:`Logging documentation <tut_logging>`
+            for more). Defaults to self.verbose.
 
         Returns
         -------
         scores : ndarray
             scores for each source as returned from score_func
         """
-        if isinstance(inst, _BaseRaw):
+        if isinstance(inst, BaseRaw):
             sources = self._transform_raw(inst, start, stop)
-        elif isinstance(inst, _BaseEpochs):
+        elif isinstance(inst, BaseEpochs):
             sources = self._transform_epochs(inst, concatenate=True)
         elif isinstance(inst, Evoked):
             sources = self._transform_evoked(inst)
@@ -865,7 +867,7 @@ class ICA(ContainsMixin):
             # auto target selection
             if verbose is None:
                 verbose = self.verbose
-            if isinstance(inst, (_BaseRaw, _BaseRaw)):
+            if isinstance(inst, BaseRaw):
                 sources, target = _band_pass_filter(self, sources, target,
                                                     l_freq, h_freq, verbose)
 
@@ -874,8 +876,8 @@ class ICA(ContainsMixin):
         return scores
 
     def _check_target(self, target, inst, start, stop):
-        """Aux Method"""
-        if isinstance(inst, _BaseRaw):
+        """Aux Method."""
+        if isinstance(inst, BaseRaw):
             start, stop = _check_start_stop(inst, start, stop)
             if hasattr(target, 'ndim'):
                 if target.ndim < 2:
@@ -884,7 +886,7 @@ class ICA(ContainsMixin):
                 pick = _get_target_ch(inst, target)
                 target, _ = inst[pick, start:stop]
 
-        elif isinstance(inst, _BaseEpochs):
+        elif isinstance(inst, BaseEpochs):
             if isinstance(target, string_types):
                 pick = _get_target_ch(inst, target)
                 target = inst.get_data()[:, pick]
@@ -904,7 +906,7 @@ class ICA(ContainsMixin):
     def find_bads_ecg(self, inst, ch_name=None, threshold=None,
                       start=None, stop=None, l_freq=8, h_freq=16,
                       method='ctps', verbose=None):
-        """Detect ECG related components using correlation
+        """Detect ECG related components using correlation.
 
         Note. If no ECG channel is available, routine attempts to create
         an artificial ECG based on cross-channel averaging.
@@ -942,8 +944,9 @@ class ICA(ContainsMixin):
             be recomputed until no supra-threshold component remains.
             Defaults to 'ctps'.
         verbose : bool, str, int, or None
-            If not None, override default verbose level (see mne.verbose).
-            Defaults to self.verbose.
+            If not None, override default verbose level (see
+            :func:`mne.verbose` and :ref:`Logging documentation <tut_logging>`
+            for more). Defaults to self.verbose.
 
         Returns
         -------
@@ -987,9 +990,9 @@ class ICA(ContainsMixin):
         if method == 'ctps':
             if threshold is None:
                 threshold = 0.25
-            if isinstance(inst, _BaseRaw):
+            if isinstance(inst, BaseRaw):
                 sources = self.get_sources(create_ecg_epochs(inst)).get_data()
-            elif isinstance(inst, _BaseEpochs):
+            elif isinstance(inst, BaseEpochs):
                 sources = self.get_sources(inst).get_data()
             else:
                 raise ValueError('With `ctps` only Raw and Epochs input is '
@@ -1020,7 +1023,7 @@ class ICA(ContainsMixin):
     def find_bads_eog(self, inst, ch_name=None, threshold=3.0,
                       start=None, stop=None, l_freq=1, h_freq=10,
                       verbose=None):
-        """Detect EOG related components using correlation
+        """Detect EOG related components using correlation.
 
         Detection is based on Pearson correlation between the
         filtered data and the filtered EOG channel.
@@ -1049,8 +1052,9 @@ class ICA(ContainsMixin):
         h_freq : float
             High pass frequency.
         verbose : bool, str, int, or None
-            If not None, override default verbose level (see mne.verbose).
-            Defaults to self.verbose.
+            If not None, override default verbose level (see
+            :func:`mne.verbose` and :ref:`Logging documentation <tut_logging>`
+            for more). Defaults to self.verbose.
 
         Returns
         -------
@@ -1124,7 +1128,7 @@ class ICA(ContainsMixin):
         Parameters
         ----------
         inst : instance of Raw, Epochs or Evoked
-            The data to be processed.
+            The data to be processed. The instance is modified inplace.
         include : array_like of int.
             The indices referring to columns in the ummixing matrix. The
             components to be kept.
@@ -1142,12 +1146,12 @@ class ICA(ContainsMixin):
             Last sample to not include. If float, data will be interpreted as
             time in seconds. If None, data will be used to the last sample.
         """
-        if isinstance(inst, _BaseRaw):
+        if isinstance(inst, BaseRaw):
             out = self._apply_raw(raw=inst, include=include,
                                   exclude=exclude,
                                   n_pca_components=n_pca_components,
                                   start=start, stop=stop)
-        elif isinstance(inst, _BaseEpochs):
+        elif isinstance(inst, BaseEpochs):
             out = self._apply_epochs(epochs=inst, include=include,
                                      exclude=exclude,
                                      n_pca_components=n_pca_components)
@@ -1161,7 +1165,7 @@ class ICA(ContainsMixin):
         return out
 
     def _apply_raw(self, raw, include, exclude, n_pca_components, start, stop):
-        """Aux method"""
+        """Aux method."""
         if not raw.preload:
             raise ValueError('Raw data must be preloaded to apply ICA')
 
@@ -1187,7 +1191,7 @@ class ICA(ContainsMixin):
         return raw
 
     def _apply_epochs(self, epochs, include, exclude, n_pca_components):
-
+        """Aux method."""
         if not epochs.preload:
             raise ValueError('Epochs must be preloaded to apply ICA')
 
@@ -1218,7 +1222,7 @@ class ICA(ContainsMixin):
         return epochs
 
     def _apply_evoked(self, evoked, include, exclude, n_pca_components):
-
+        """Aux method."""
         picks = pick_types(evoked.info, meg=False, ref_meg=False,
                            include=self.ch_names,
                            exclude='bads')
@@ -1245,7 +1249,7 @@ class ICA(ContainsMixin):
         return evoked
 
     def _pick_sources(self, data, include, exclude):
-        """Aux function"""
+        """Aux function."""
         fast_dot = _get_fast_dot()
         if exclude is None:
             exclude = self.exclude
@@ -1329,7 +1333,7 @@ class ICA(ContainsMixin):
         return self
 
     def copy(self):
-        """Copy the ICA object
+        """Copy the ICA object.
 
         Returns
         -------
@@ -1497,7 +1501,7 @@ class ICA(ContainsMixin):
 
     @verbose
     def _check_n_pca_components(self, _n_pca_comp, verbose=None):
-        """Aux function"""
+        """Aux function."""
         if isinstance(_n_pca_comp, float):
             _n_pca_comp = ((self.pca_explained_variance_ /
                            self.pca_explained_variance_.sum()).cumsum() <=
@@ -1513,7 +1517,7 @@ class ICA(ContainsMixin):
 
 
 def _check_start_stop(raw, start, stop):
-    """Aux function"""
+    """Aux function."""
     return [c if (isinstance(c, int) or c is None) else
             raw.time_as_index(c)[0] for c in (start, stop)]
 
@@ -1522,7 +1526,7 @@ def _check_start_stop(raw, start, stop):
 def ica_find_ecg_events(raw, ecg_source, event_id=999,
                         tstart=0.0, l_freq=5, h_freq=35, qrs_threshold='auto',
                         verbose=None):
-    """Find ECG peaks from one selected ICA source
+    """Find ECG peaks from one selected ICA source.
 
     Parameters
     ----------
@@ -1544,7 +1548,8 @@ def ica_find_ecg_events(raw, ecg_source, event_id=999,
         automatically choose the threshold that generates a reasonable
         number of heartbeats (40-160 beats / min).
     verbose : bool, str, int, or None
-        If not None, override default verbose level (see mne.verbose).
+        If not None, override default verbose level (see :func:`mne.verbose`
+        and :ref:`Logging documentation <tut_logging>` for more).
 
     Returns
     -------
@@ -1573,7 +1578,7 @@ def ica_find_ecg_events(raw, ecg_source, event_id=999,
 @verbose
 def ica_find_eog_events(raw, eog_source=None, event_id=998, l_freq=1,
                         h_freq=10, verbose=None):
-    """Locate EOG artifacts from one selected ICA source
+    """Locate EOG artifacts from one selected ICA source.
 
     Parameters
     ----------
@@ -1588,7 +1593,8 @@ def ica_find_eog_events(raw, eog_source=None, event_id=998, l_freq=1,
     h_freq : float
         High cut-off frequency in Hz.
     verbose : bool, str, int, or None
-        If not None, override default verbose level (see mne.verbose).
+        If not None, override default verbose level (see :func:`mne.verbose`
+        and :ref:`Logging documentation <tut_logging>` for more).
 
     Returns
     -------
@@ -1603,8 +1609,7 @@ def ica_find_eog_events(raw, eog_source=None, event_id=998, l_freq=1,
 
 
 def _get_target_ch(container, target):
-    """Aux function"""
-
+    """Aux function."""
     # auto target selection
     picks = pick_channels(container.ch_names, include=[target])
     ref_picks = pick_types(container.info, meg=False, eeg=False, ref_meg=True)
@@ -1618,7 +1623,7 @@ def _get_target_ch(container, target):
 
 
 def _find_sources(sources, target, score_func):
-    """Aux function"""
+    """Aux function."""
     if isinstance(score_func, string_types):
         score_func = get_score_funcs().get(score_func, score_func)
 
@@ -1632,7 +1637,7 @@ def _find_sources(sources, target, score_func):
 
 
 def _ica_explained_variance(ica, inst, normalize=False):
-    """Checks variance accounted for by each component in supplied data.
+    """Check variance accounted for by each component in supplied data.
 
     Parameters
     ----------
@@ -1651,14 +1656,14 @@ def _ica_explained_variance(ica, inst, normalize=False):
     # check if ica is ICA and whether inst is Raw or Epochs
     if not isinstance(ica, ICA):
         raise TypeError('first argument must be an instance of ICA.')
-    if not isinstance(inst, (_BaseRaw, _BaseEpochs, Evoked)):
+    if not isinstance(inst, (BaseRaw, BaseEpochs, Evoked)):
         raise TypeError('second argument must an instance of either Raw, '
                         'Epochs or Evoked.')
 
     source_data = _get_inst_data(ica.get_sources(inst))
 
     # if epochs - reshape to channels x timesamples
-    if isinstance(inst, _BaseEpochs):
+    if isinstance(inst, BaseEpochs):
         n_epochs, n_chan, n_samp = source_data.shape
         source_data = source_data.transpose(1, 0, 2).reshape(
             (n_chan, n_epochs * n_samp))
@@ -1694,7 +1699,7 @@ def _sort_components(ica, order, copy=True):
 
 
 def _serialize(dict_, outer_sep=';', inner_sep=':'):
-    """Aux function"""
+    """Aux function."""
     s = []
     for key, value in dict_.items():
         if callable(value):
@@ -1719,7 +1724,7 @@ def _serialize(dict_, outer_sep=';', inner_sep=':'):
 
 
 def _deserialize(str_, outer_sep=';', inner_sep=':'):
-    """Aux Function"""
+    """Aux Function."""
     out = {}
     for mapping in str_.split(outer_sep):
         k, v = mapping.split(inner_sep, 1)
@@ -1730,7 +1735,7 @@ def _deserialize(str_, outer_sep=';', inner_sep=':'):
 
 
 def _write_ica(fid, ica):
-    """Write an ICA object
+    """Write an ICA object.
 
     Parameters
     ----------
@@ -1919,7 +1924,7 @@ def _detect_artifacts(ica, raw, start_find, stop_find, ecg_ch, ecg_score_func,
                       ecg_criterion, eog_ch, eog_score_func, eog_criterion,
                       skew_criterion, kurt_criterion, var_criterion,
                       add_nodes):
-    """Aux Function"""
+    """Aux Function."""
     from scipy import stats
 
     nodes = []
@@ -1974,7 +1979,7 @@ def run_ica(raw, n_components, max_pca_components=100,
             ecg_criterion=0.1, eog_ch=None, eog_score_func='pearsonr',
             eog_criterion=0.1, skew_criterion=-1, kurt_criterion=-1,
             var_criterion=0, add_nodes=None, verbose=None):
-    """Run ICA decomposition on raw data and identify artifact sources
+    """Run ICA decomposition on raw data and identify artifact sources.
 
     This function implements an automated artifact removal work flow.
 
@@ -2096,7 +2101,8 @@ def run_ica(raw, n_components, max_pca_components=100,
             add_nodes=('ECG phase lock', ECG 01', my_phase_lock_function, 0.5)
 
     verbose : bool, str, int, or None
-        If not None, override default verbose level (see mne.verbose).
+        If not None, override default verbose level (see :func:`mne.verbose`
+        and :ref:`Logging documentation <tut_logging>` for more).
 
     Returns
     -------
@@ -2126,19 +2132,17 @@ def run_ica(raw, n_components, max_pca_components=100,
 
 @verbose
 def _band_pass_filter(ica, sources, target, l_freq, h_freq, verbose=None):
+    """Optionally band-pass filter the data."""
     if l_freq is not None and h_freq is not None:
         logger.info('... filtering ICA sources')
-        # use fft, here, steeper is better here.
-        sources = band_pass_filter(sources, ica.info['sfreq'],
-                                   l_freq, h_freq, method='fft',
-                                   verbose=verbose)
+        # use FIR here, steeper is better
+        kw = dict(phase='zero-double', filter_length='10s', fir_window='hann',
+                  l_trans_bandwidth=0.5, h_trans_bandwidth=0.5)
+        sources = filter_data(sources, ica.info['sfreq'], l_freq, h_freq, **kw)
         logger.info('... filtering target')
-        target = band_pass_filter(target, ica.info['sfreq'],
-                                  l_freq, h_freq, method='fft',
-                                  verbose=verbose)
+        target = filter_data(target, ica.info['sfreq'], l_freq, h_freq, **kw)
     elif l_freq is not None or h_freq is not None:
         raise ValueError('Must specify both pass bands')
-
     return sources, target
 
 
@@ -2146,7 +2150,7 @@ def _band_pass_filter(ica, sources, target, l_freq, h_freq, verbose=None):
 # CORRMAP
 
 def _get_ica_map(ica, components=None):
-    """Get ICA topomap for components"""
+    """Get ICA topomap for components."""
     fast_dot = _get_fast_dot()
     if components is None:
         components = list(range(ica.n_components_))
@@ -2156,7 +2160,7 @@ def _get_ica_map(ica, components=None):
 
 
 def _find_max_corrs(all_maps, target, threshold):
-    """Compute correlations between template and target components"""
+    """Compute correlations between template and target components."""
     all_corrs = [compute_corr(target, subj.T) for subj in all_maps]
     abs_corrs = [np.abs(a) for a in all_corrs]
     corr_polarities = [np.sign(a) for a in all_corrs]
@@ -2196,7 +2200,7 @@ def _find_max_corrs(all_maps, target, threshold):
 
 def _plot_corrmap(data, subjs, indices, ch_type, ica, label, show, outlines,
                   layout, cmap, contours, template=True):
-    """Customized ica.plot_components for corrmap"""
+    """Customized ica.plot_components for corrmap."""
     if not template:
         title = 'Detected components'
         if label is not None:
@@ -2298,19 +2302,20 @@ def corrmap(icas, template, threshold="auto", label=None, ch_type="eeg",
         original Corrmap)
         Defaults to "auto".
     label : None | str
-        If not None, categorised ICs are stored in a dictionary "labels_" under
-        the given name. Preexisting entries will be appended to (excluding
-        repeats), not overwritten. If None, a dry run is performed and
-        the supplied ICs are not changed.
+        If not None, categorised ICs are stored in a dictionary ``labels_``
+        under the given name. Preexisting entries will be appended to
+        (excluding repeats), not overwritten. If None, a dry run is performed
+        and the supplied ICs are not changed.
     ch_type : 'mag' | 'grad' | 'planar1' | 'planar2' | 'eeg'
-            The channel type to plot. Defaults to 'eeg'.
+        The channel type to plot. Defaults to 'eeg'.
     plot : bool
         Should constructed template and selected maps be plotted? Defaults
         to True.
     show : bool
         Show figures if True.
     verbose : bool, str, int, or None
-        If not None, override default verbose level (see mne.verbose).
+        If not None, override default verbose level (see :func:`mne.verbose`
+        and :ref:`Logging documentation <tut_logging>` for more).
     outlines : 'head' | dict | None
         The outlines to be drawn. If 'head', a head scheme will be drawn. If
         dict, each key refers to a tuple of x and y positions. The values in

@@ -9,7 +9,6 @@ from functools import reduce
 from string import ascii_uppercase
 
 from ..externals.six import string_types
-from ..fixes import matrix_rank
 
 # The following function is a rewriting of scipy.stats.f_oneway
 # Contrary to the scipy.stats.f_oneway implementation it does not
@@ -17,8 +16,7 @@ from ..fixes import matrix_rank
 
 
 def _f_oneway(*args):
-    """
-    Performs a 1-way ANOVA.
+    """Perform a 1-way ANOVA.
 
     The one-way ANOVA tests the null hypothesis that 2 or more groups have
     the same population mean. The test is applied to samples from two or
@@ -90,12 +88,12 @@ def _f_oneway(*args):
 
 
 def f_oneway(*args):
-    """Call scipy.stats.f_oneway, but return only f-value"""
+    """Call scipy.stats.f_oneway, but return only f-value."""
     return _f_oneway(*args)[0]
 
 
 def _map_effects(n_factors, effects):
-    """Map effects to indices"""
+    """Map effects to indices."""
     if n_factors > len(ascii_uppercase):
         raise ValueError('Maximum number of factors supported is 26')
 
@@ -153,14 +151,14 @@ def _map_effects(n_factors, effects):
     return selection, names
 
 
-def _get_contrast_indices(effect_idx, n_factors):
-    """Henson's factor coding, see num2binvec"""
+def _get_contrast_indices(effect_idx, n_factors):  # noqa: D401
+    """Henson's factor coding, see num2binvec."""
     binrepr = np.binary_repr(effect_idx, n_factors)
     return np.array([int(i) for i in binrepr], dtype=int)
 
 
 def _iter_contrasts(n_subjects, factor_levels, effect_picks):
-    """ Aux Function: Setup contrasts """
+    """Setup contrasts."""
     from scipy.signal import detrend
     sc = []
     n_factors = len(factor_levels)
@@ -180,14 +178,14 @@ def _iter_contrasts(n_subjects, factor_levels, effect_picks):
         for i_contrast in range(1, n_factors):
             this_contrast = contrast_idx[(n_factors - 1) - i_contrast]
             c_ = np.kron(c_, sc[i_contrast][this_contrast])
-        df1 = matrix_rank(c_)
+        df1 = np.linalg.matrix_rank(c_)
         df2 = df1 * (n_subjects - 1)
         yield c_, df1, df2
 
 
 def f_threshold_mway_rm(n_subjects, factor_levels, effects='A*B',
                         pvalue=0.05):
-    """ Compute f-value thesholds for a two-way ANOVA
+    """Compute f-value thesholds for a two-way ANOVA.
 
     Parameters
     ----------
@@ -236,7 +234,7 @@ def f_threshold_mway_rm(n_subjects, factor_levels, effects='A*B',
 
 def f_mway_rm(data, factor_levels, effects='all', alpha=0.05,
               correction=False, return_pvals=True):
-    """M-way repeated measures ANOVA for fully balanced designs
+    """Compute M-way repeated measures ANOVA for fully balanced designs.
 
     Parameters
     ----------

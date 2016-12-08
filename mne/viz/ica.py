@@ -1,5 +1,4 @@
-"""Functions to plot ICA specific data (besides topographies)
-"""
+"""Functions to plot ICA specific data (besides topographies)."""
 from __future__ import print_function
 
 # Authors: Denis Engemann <denis.engemann@gmail.com>
@@ -78,20 +77,19 @@ def plot_ica_sources(ica, inst, picks=None, exclude=None, start=None,
 
     .. versionadded:: 0.10.0
     """
-
-    from ..io.base import _BaseRaw
+    from ..io.base import BaseRaw
     from ..evoked import Evoked
-    from ..epochs import _BaseEpochs
+    from ..epochs import BaseEpochs
 
     if exclude is None:
         exclude = ica.exclude
     elif len(ica.exclude) > 0:
         exclude = np.union1d(ica.exclude, exclude)
-    if isinstance(inst, _BaseRaw):
+    if isinstance(inst, BaseRaw):
         fig = _plot_sources_raw(ica, inst, picks, exclude, start=start,
                                 stop=stop, show=show, title=title,
                                 block=block)
-    elif isinstance(inst, _BaseEpochs):
+    elif isinstance(inst, BaseEpochs):
         fig = _plot_sources_epochs(ica, inst, picks, exclude, start=start,
                                    stop=stop, show=show, title=title,
                                    block=block)
@@ -109,7 +107,7 @@ def plot_ica_sources(ica, inst, picks=None, exclude=None, start=None,
 
 
 def _create_properties_layout(figsize=None):
-    """creates main figure and axes layout used by plot_ica_properties"""
+    """Create main figure and axes layout used by plot_ica_properties."""
     import matplotlib.pyplot as plt
     if figsize is None:
         figsize = [7., 6.]
@@ -126,8 +124,10 @@ def _create_properties_layout(figsize=None):
 def plot_ica_properties(ica, inst, picks=None, axes=None, dB=True,
                         plot_std=True, topomap_args=None, image_args=None,
                         psd_args=None, figsize=None, show=True):
-    """Display component properties: topography, epochs image, ERP/ERF,
-    power spectrum and epoch variance.
+    """Display component properties.
+
+    Properties include the topography, epochs image, ERP/ERF, power
+    spectrum, and epoch variance.
 
     Parameters
     ----------
@@ -174,11 +174,11 @@ def plot_ica_properties(ica, inst, picks=None, axes=None, dB=True,
     -----
     .. versionadded:: 0.13
     """
-    from ..io.base import _BaseRaw
-    from ..epochs import _BaseEpochs
+    from ..io.base import BaseRaw
+    from ..epochs import BaseEpochs
     from ..preprocessing import ICA
 
-    if not isinstance(inst, (_BaseRaw, _BaseEpochs)):
+    if not isinstance(inst, (BaseRaw, BaseEpochs)):
         raise ValueError('inst should be an instance of Raw or Epochs,'
                          ' got %s instead.' % type(inst))
     if not isinstance(ica, ICA):
@@ -219,7 +219,7 @@ def plot_ica_properties(ica, inst, picks=None, axes=None, dB=True,
     # calculations
     # ------------
     plot_line_at_zero = False
-    if isinstance(inst, _BaseRaw):
+    if isinstance(inst, BaseRaw):
         # break up continuous signal into segments
         from ..epochs import _segment_raw
         inst = _segment_raw(inst, segment_length=2., verbose=False,
@@ -358,7 +358,7 @@ def plot_ica_properties(ica, inst, picks=None, axes=None, dB=True,
 
 
 def _plot_ica_sources_evoked(evoked, picks, exclude, title, show, labels=None):
-    """Plot average over epochs in ICA space
+    """Plot average over epochs in ICA space.
 
     Parameters
     ----------
@@ -400,7 +400,7 @@ def _plot_ica_sources_evoked(evoked, picks, exclude, title, show, labels=None):
     exclude_labels = list()
     for ii in picks:
         if ii in exclude:
-            line_label = 'ICA %03d' % (ii + 1)
+            line_label = 'IC #%03d' % ii
             if labels is not None:
                 annot = list()
                 for this_label in labels_used:
@@ -606,11 +606,11 @@ def plot_ica_overlay(ica, inst, exclude=None, picks=None, start=None,
         The figure.
     """
     # avoid circular imports
-    from ..io.base import _BaseRaw
+    from ..io.base import BaseRaw
     from ..evoked import Evoked
     from ..preprocessing.ica import _check_start_stop
 
-    if not isinstance(inst, (_BaseRaw, Evoked)):
+    if not isinstance(inst, (BaseRaw, Evoked)):
         raise ValueError('Data input must be of Raw or Evoked type')
     if title is None:
         title = 'Signals before (red) and after (black) cleaning'
@@ -618,7 +618,7 @@ def plot_ica_overlay(ica, inst, exclude=None, picks=None, start=None,
         picks = [inst.ch_names.index(k) for k in ica.ch_names]
     if exclude is None:
         exclude = ica.exclude
-    if isinstance(inst, _BaseRaw):
+    if isinstance(inst, BaseRaw):
         if start is None:
             start = 0.0
         if stop is None:
@@ -646,7 +646,7 @@ def plot_ica_overlay(ica, inst, exclude=None, picks=None, start=None,
 
 
 def _plot_ica_overlay_raw(data, data_cln, times, title, ch_types_used, show):
-    """Plot evoked after and before ICA cleaning
+    """Plot evoked after and before ICA cleaning.
 
     Parameters
     ----------
@@ -694,7 +694,7 @@ def _plot_ica_overlay_raw(data, data_cln, times, title, ch_types_used, show):
 
 
 def _plot_ica_overlay_evoked(evoked, evoked_cln, title, show):
-    """Plot evoked after and before ICA cleaning
+    """Plot evoked after and before ICA cleaning.
 
     Parameters
     ----------
@@ -739,7 +739,7 @@ def _plot_ica_overlay_evoked(evoked, evoked_cln, title, show):
 
 def _plot_sources_raw(ica, raw, picks, exclude, start, stop, show, title,
                       block):
-    """Function for plotting the ICA components as raw array."""
+    """Plot the ICA components as raw array."""
     color = _handle_default('color', (0., 0., 0.))
     orig_data = ica._transform_raw(raw, 0, len(raw.times)) * 0.2
     if picks is None:
@@ -749,7 +749,7 @@ def _plot_sources_raw(ica, raw, picks, exclude, start, stop, show, title,
     eog_chs = pick_types(raw.info, meg=False, eog=True, ref_meg=False)
     ecg_chs = pick_types(raw.info, meg=False, ecg=True, ref_meg=False)
     data = [orig_data[pick] for pick in picks]
-    c_names = ['ICA %03d' % (x + 1) for x in range(len(orig_data))]
+    c_names = ['IC #%03d' % x for x in range(len(orig_data))]
     for eog_idx in eog_chs:
         c_names.append(raw.ch_names[eog_idx])
         types.append('eog')
@@ -823,7 +823,7 @@ def _plot_sources_raw(ica, raw, picks, exclude, start, stop, show, title,
 
 
 def _update_data(params):
-    """Function for preparing the data on horizontal shift of the viewport."""
+    """Prepare the data on horizontal shift of the viewport."""
     sfreq = params['info']['sfreq']
     start = int(params['t_start'] * sfreq)
     end = int((params['t_start'] + params['duration']) * sfreq)
@@ -832,7 +832,7 @@ def _update_data(params):
 
 
 def _pick_bads(event, params):
-    """Function for selecting components on click."""
+    """Select components on click."""
     bads = params['info']['bads']
     params['info']['bads'] = _select_bads(event, params, bads)
     params['update_fun']()
@@ -840,21 +840,20 @@ def _pick_bads(event, params):
 
 
 def _close_event(events, params):
-    """Function for excluding the selected components on close."""
+    """Exclude the selected components on close."""
     info = params['info']
-    c_names = ['ICA %03d' % (x + 1) for x
-               in range(params['ica'].n_components_)]
-    exclude = [c_names.index(x) for x in info['bads'] if x.startswith('ICA')]
+    c_names = ['IC #%03d' % x for x in range(params['ica'].n_components_)]
+    exclude = [c_names.index(x) for x in info['bads'] if x.startswith('IC')]
     params['ica'].exclude = exclude
 
 
 def _plot_sources_epochs(ica, epochs, picks, exclude, start, stop, show,
                          title, block):
-    """Function for plotting the components as epochs."""
+    """Plot the components as epochs."""
     data = ica._transform_epochs(epochs, concatenate=True)
     eog_chs = pick_types(epochs.info, meg=False, eog=True, ref_meg=False)
     ecg_chs = pick_types(epochs.info, meg=False, ecg=True, ref_meg=False)
-    c_names = ['ICA %03d' % (x + 1) for x in range(ica.n_components_)]
+    c_names = ['IC #%03d' % x for x in range(ica.n_components_)]
     ch_types = np.repeat('misc', ica.n_components_)
     for eog_idx in eog_chs:
         c_names.append(epochs.ch_names[eog_idx])
@@ -912,7 +911,7 @@ def _plot_sources_epochs(ica, epochs, picks, exclude, start, stop, show,
 
 
 def _update_epoch_data(params):
-    """Function for preparing the data on horizontal shift."""
+    """Prepare the data on horizontal shift."""
     start = params['t_start']
     n_epochs = params['n_epochs']
     end = start + n_epochs * len(params['epochs'].times)
@@ -924,15 +923,15 @@ def _update_epoch_data(params):
 
 
 def _close_epochs_event(events, params):
-    """Function for excluding the selected components on close."""
+    """Exclude the selected components on close."""
     info = params['info']
     exclude = [info['ch_names'].index(x) for x in info['bads']
-               if x.startswith('ICA')]
+               if x.startswith('IC')]
     params['ica'].exclude = exclude
 
 
 def _label_clicked(pos, params):
-    """Function for plotting independent components on click to label."""
+    """Plot independent components on click to label."""
     import matplotlib.pyplot as plt
     offsets = np.array(params['offsets']) + params['offsets'][0]
     line_idx = np.searchsorted(offsets, pos[1]) + params['ch_start']

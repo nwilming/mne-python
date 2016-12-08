@@ -2,6 +2,8 @@
 #
 # License: BSD (3-clause)
 
+from functools import partial
+
 import numpy as np
 from scipy import linalg, fftpack
 
@@ -14,18 +16,18 @@ from .transforms import (apply_trans, invert_transform, _angle_between_quats,
                          quat_to_rot, rot_to_quat)
 from .utils import (verbose, logger, check_version, use_log_level,
                     _check_fname, warn)
-from .fixes import partial
 
 # Eventually we should add:
 #   hpicons
 #   high-passing of data during fits
+#   parsing cHPI coil information from acq pars, then to PSD if necessary
 
 
 # ############################################################################
 # Reading from text or FIF file
 
 def read_head_pos(fname):
-    """Read MaxFilter-formatted head position parameters
+    """Read MaxFilter-formatted head position parameters.
 
     Parameters
     ----------
@@ -57,7 +59,7 @@ def read_head_pos(fname):
 
 
 def write_head_pos(fname, pos):
-    """Write MaxFilter-formatted head position parameters
+    """Write MaxFilter-formatted head position parameters.
 
     Parameters
     ----------
@@ -89,7 +91,7 @@ def write_head_pos(fname, pos):
 
 
 def head_pos_to_trans_rot_t(quats):
-    """Convert Maxfilter-formatted head position quaternions
+    """Convert Maxfilter-formatted head position quaternions.
 
     Parameters
     ----------
@@ -119,8 +121,9 @@ def head_pos_to_trans_rot_t(quats):
 # ############################################################################
 # Estimate positions from data
 
-def _get_hpi_info(info):
-    """Helper to get HPI information from raw"""
+@verbose
+def _get_hpi_info(info, adjust=False, verbose=None):
+    """Helper to get HPI information from raw."""
     if len(info['hpi_meas']) == 0 or \
             ('coil_freq' not in info['hpi_meas'][0]['hpi_coils'][0]):
         raise RuntimeError('Appropriate cHPI information not found in'
@@ -132,7 +135,6 @@ def _get_hpi_info(info):
                       if d['kind'] == FIFF.FIFFV_POINT_HPI],
                      key=lambda x: x['ident'])  # ascending (dig) order
     pos_order = hpi_result['order'] - 1  # zero-based indexing, dig->info
-    # hpi_result['dig_points'] are in FIFFV_COORD_UNKNOWN coords...?
 
     # this shouldn't happen, eventually we could add the transforms
     # necessary to put it in head coords
@@ -145,28 +147,69 @@ def _get_hpi_info(info):
                  % (len(hpi_result['used']),
                     ' '.join(str(h) for h in hpi_result['used'])))
     hpi_rrs = np.array([d['r'] for d in hpi_dig])[pos_order]
-    # errors = 1000 * np.sqrt((hpi_rrs - hpi_rrs_fit) ** 2).sum(axis=1)
-    # logger.debug('HPIFIT errors:  %s'
-    #              % ', '.join('%0.1f' % e for e in errors))
-    hpi_freqs = np.array([float(x['coil_freq']) for x in hpi_coils])
+
+    # Fitting errors
+    hpi_rrs_fit = sorted([d for d in info['hpi_results'][-1]['dig_points']],
+                         key=lambda x: x['ident'])
+    hpi_rrs_fit = np.array([d['r'] for d in hpi_rrs_fit])
+    # hpi_result['dig_points'] are in FIFFV_COORD_UNKNOWN coords, but this
+    # is probably a misnomer because it should be FIFFV_COORD_DEVICE for this
+    # to work
+    assert hpi_result['coord_trans']['to'] == FIFF.FIFFV_COORD_HEAD
+    hpi_rrs_fit = apply_trans(hpi_result['coord_trans']['trans'], hpi_rrs_fit)
+    if 'moments' in hpi_result:
+        logger.debug('Hpi coil moments (%d %d):'
+                     % hpi_result['moments'].shape[::-1])
+        for moment in hpi_result['moments']:
+            logger.debug("%g %g %g" % tuple(moment))
+    errors = np.sqrt(((hpi_rrs - hpi_rrs_fit) ** 2).sum(axis=1))
+    logger.debug('HPIFIT errors:  %s mm.'
+                 % ', '.join('%0.1f' % (1000. * e) for e in errors))
+    if errors.sum() < len(errors) * hpi_result['dist_limit']:
+        logger.info('HPI consistency of isotrak and hpifit is OK.')
+    elif not adjust and (len(hpi_result['used']) == len(hpi_coils)):
+        warn('HPI consistency of isotrak and hpifit is poor.')
+    else:
+        # adjust HPI coil locations using the hpifit transformation
+        for hi, (r_dig, r_fit) in enumerate(zip(hpi_rrs, hpi_rrs_fit)):
+            # transform to head frame
+            d = 1000 * np.sqrt(((r_dig - r_fit) ** 2).sum())
+            if not adjust:
+                warn('Discrepancy of HPI coil %d isotrak and hpifit is %.1f '
+                     'mm!' % (hi + 1, d))
+            elif hi + 1 not in hpi_result['used']:
+                if hpi_result['goodness'][hi] >= hpi_result['good_limit']:
+                    logger.info('Note: HPI coil %d isotrak is adjusted by '
+                                '%.1f mm!' % (hi + 1, d))
+                    hpi_rrs[hi] = r_fit
+                else:
+                    warn('Discrepancy of HPI coil %d isotrak and hpifit of '
+                         '%.1f mm was not adjusted!' % (hi + 1, d))
+    logger.debug('HP fitting limits: err = %.1f mm, gval = %.3f.'
+                 % (1000 * hpi_result['dist_limit'], hpi_result['good_limit']))
+
     # how cHPI active is indicated in the FIF file
     hpi_sub = info['hpi_subsystem']
     if 'event_channel' in hpi_sub:
         hpi_pick = pick_channels(info['ch_names'],
-                                 [hpi_sub['event_channel']])[0]
+                                 [hpi_sub['event_channel']])
+        hpi_pick = hpi_pick[0] if len(hpi_pick) > 0 else None
     else:
         hpi_pick = None  # there is no pick!
     hpi_on = [coil['event_bits'][0] for coil in hpi_sub['hpi_coils']]
     # not all HPI coils will actually be used
     hpi_on = np.array([hpi_on[hc['number'] - 1] for hc in hpi_coils])
     assert len(hpi_coils) == len(hpi_on)
+
+    # get frequencies
+    hpi_freqs = np.array([float(x['coil_freq']) for x in hpi_coils])
     logger.info('Using %s HPI coils: %s Hz'
                 % (len(hpi_freqs), ' '.join(str(int(s)) for s in hpi_freqs)))
     return hpi_freqs, hpi_rrs, hpi_pick, hpi_on, pos_order
 
 
 def _magnetic_dipole_objective(x, B, B2, coils, scale, method):
-    """Project data onto right eigenvectors of whitened forward"""
+    """Project data onto right eigenvectors of whitened forward."""
     if method == 'forward':
         fwd = _magnetic_dipole_field_vec(x[np.newaxis, :], coils)
     else:
@@ -182,7 +225,7 @@ def _magnetic_dipole_objective(x, B, B2, coils, scale, method):
 
 
 def _fit_magnetic_dipole(B_orig, x0, coils, scale, method):
-    """Fit a single bit of data (x0 = pos)"""
+    """Fit a single bit of data (x0 = pos)."""
     from scipy.optimize import fmin_cobyla
     B = np.dot(scale, B_orig)
     B2 = np.dot(B, B)
@@ -193,7 +236,7 @@ def _fit_magnetic_dipole(B_orig, x0, coils, scale, method):
 
 
 def _chpi_objective(x, coil_dev_rrs, coil_head_rrs):
-    """Helper objective function"""
+    """Helper objective function."""
     d = np.dot(coil_dev_rrs, quat_to_rot(x[:3]).T)
     d += x[3:]
     d -= coil_head_rrs
@@ -202,12 +245,12 @@ def _chpi_objective(x, coil_dev_rrs, coil_head_rrs):
 
 
 def _unit_quat_constraint(x):
-    """Constrain our 3 quaternion rot params (ignoring w) to have norm <= 1"""
+    """Constrain our 3 quaternion rot params (ignoring w) to have norm <= 1."""
     return 1 - (x * x).sum()
 
 
 def _fit_chpi_pos(coil_dev_rrs, coil_head_rrs, x0):
-    """Fit rotation and translation parameters for cHPI coils"""
+    """Fit rotation and translation parameters for cHPI coils."""
     from scipy.optimize import fmin_cobyla
     denom = np.sum((coil_head_rrs - np.mean(coil_head_rrs, axis=0)) ** 2)
     objective = partial(_chpi_objective, coil_dev_rrs=coil_dev_rrs,
@@ -221,7 +264,7 @@ def _fit_chpi_pos(coil_dev_rrs, coil_head_rrs, x0):
 def _setup_chpi_fits(info, t_window, t_step_min, method='forward',
                      exclude='bads', add_hpi_stim_pick=True,
                      remove_aliased=False, verbose=None):
-    """Helper to set up cHPI fits"""
+    """Helper to set up cHPI fits."""
     from scipy.spatial.distance import cdist
     from .preprocessing.maxwell import _prep_mf_coils
     if not (check_version('numpy', '1.7') and check_version('scipy', '0.11')):
@@ -304,7 +347,7 @@ def _setup_chpi_fits(info, t_window, t_step_min, method='forward',
 
 
 def _time_prefix(fit_time):
-    """Helper to format log messages"""
+    """Helper to format log messages."""
     return ('    t=%0.3f:' % fit_time).ljust(17)
 
 
@@ -312,7 +355,7 @@ def _time_prefix(fit_time):
 def _calculate_chpi_positions(raw, t_step_min=0.1, t_step_max=10.,
                               t_window=0.2, dist_limit=0.005, gof_limit=0.98,
                               verbose=None):
-    """Calculate head positions using cHPI coils
+    """Calculate head positions using cHPI coils.
 
     Parameters
     ----------
@@ -332,7 +375,8 @@ def _calculate_chpi_positions(raw, t_step_min=0.1, t_step_max=10.,
     gof_limit : float
         Minimum goodness of fit to accept.
     verbose : bool, str, int, or None
-        If not None, override default verbose level (see mne.verbose).
+        If not None, override default verbose level (see :func:`mne.verbose`
+        and :ref:`Logging documentation <tut_logging>` for more).
 
     Returns
     -------
@@ -470,10 +514,9 @@ def _calculate_chpi_positions(raw, t_step_min=0.1, t_step_max=10.,
                     % ((use_mask.sum(), n_freqs) + vs))
         # resulting errors in head coil positions
         est_coil_head_rrs = apply_trans(this_dev_head_t, this_coil_dev_rrs)
-        errs = 1000. * np.sqrt(np.sum((hpi['coil_head_rrs'] -
-                                       est_coil_head_rrs) ** 2,
-                                      axis=1))
-        e = 0.  # XXX eventually calculate this -- cumulative error of fit?
+        errs = 1000. * np.sqrt(((hpi['coil_head_rrs'] -
+                                 est_coil_head_rrs) ** 2).sum(axis=-1))
+        e = errs.mean() / 1000.  # mm -> m
         d = 100 * np.sqrt(np.sum(last['quat'][3:] - this_quat[3:]) ** 2)  # cm
         r = _angle_between_quats(last['quat'][:3], this_quat[:3]) / dt
         v = d / dt  # cm/sec
@@ -518,7 +561,7 @@ def _calculate_chpi_positions(raw, t_step_min=0.1, t_step_max=10.,
 
 @verbose
 def filter_chpi(raw, include_line=True, verbose=None):
-    """Remove cHPI and line noise from data
+    """Remove cHPI and line noise from data.
 
     .. note:: This function will only work properly if cHPI was on
               during the recording.
@@ -530,7 +573,8 @@ def filter_chpi(raw, include_line=True, verbose=None):
     include_line : bool
         If True, also filter line noise.
     verbose : bool, str, int, or None
-        If not None, override default verbose level (see mne.verbose).
+        If not None, override default verbose level (see :func:`mne.verbose`
+        and :ref:`Logging documentation <tut_logging>` for more).
 
     Returns
     -------

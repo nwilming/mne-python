@@ -1,5 +1,4 @@
-"""Utility functions for plotting M/EEG data
-"""
+"""Utility functions for plotting M/EEG data."""
 from __future__ import print_function
 
 # Authors: Alexandre Gramfort <alexandre.gramfort@telecom-paristech.fr>
@@ -26,7 +25,6 @@ from ..io import show_fiff, Info
 from ..io.pick import channel_type, channel_indices_by_type, pick_channels
 from ..utils import verbose, set_config, warn
 from ..externals.six import string_types
-from ..fixes import _get_argrelmax
 from ..selection import (read_selection, _SELECTIONS, _EEG_SELECTIONS,
                          _divide_to_regions)
 
@@ -36,7 +34,7 @@ COLORS = ['b', 'g', 'r', 'c', 'm', 'y', 'k', '#473C8B', '#458B74',
 
 
 def _setup_vmin_vmax(data, vmin, vmax, norm=False):
-    """Aux function to handle vmin and vmax parameters"""
+    """Aux function to handle vmin and vmax parameters."""
     if vmax is None and vmin is None:
         vmax = np.abs(data).max()
         if norm:
@@ -59,7 +57,7 @@ def _setup_vmin_vmax(data, vmin, vmax, norm=False):
 
 
 def plt_show(show=True, **kwargs):
-    """Helper to show a figure while suppressing warnings"""
+    """Helper to show a figure while suppressing warnings."""
     import matplotlib
     import matplotlib.pyplot as plt
     if show and matplotlib.get_backend() != 'agg':
@@ -67,7 +65,7 @@ def plt_show(show=True, **kwargs):
 
 
 def tight_layout(pad=1.2, h_pad=None, w_pad=None, fig=None):
-    """ Adjust subplot parameters to give specified padding.
+    """Adjust subplot parameters to give specified padding.
 
     Note. For plotting please use this function instead of plt.tight_layout
 
@@ -100,8 +98,7 @@ def tight_layout(pad=1.2, h_pad=None, w_pad=None, fig=None):
 
 
 def _check_delayed_ssp(container):
-    """ Aux function to be used for interactive SSP selection
-    """
+    """Aux function to be used for interactive SSP selection."""
     if container.proj is True or\
        all(p['active'] for p in container.info['projs']):
         raise RuntimeError('Projs are already applied. Please initialize'
@@ -111,7 +108,7 @@ def _check_delayed_ssp(container):
 
 
 def _validate_if_list_of_axes(axes, obligatory_len=None):
-    """ Helper function that validates whether input is a list/array of axes"""
+    """Helper function that validates whether input is a list/array of axes."""
     import matplotlib as mpl
     if obligatory_len is not None and not isinstance(obligatory_len, int):
         raise ValueError('obligatory_len must be None or int, got %d',
@@ -137,7 +134,7 @@ def _validate_if_list_of_axes(axes, obligatory_len=None):
 
 
 def mne_analyze_colormap(limits=[5, 10, 15], format='mayavi'):
-    """Return a colormap similar to that used by mne_analyze
+    """Return a colormap similar to that used by mne_analyze.
 
     Parameters
     ----------
@@ -225,7 +222,7 @@ def mne_analyze_colormap(limits=[5, 10, 15], format='mayavi'):
 
 
 def _toggle_options(event, params):
-    """Toggle options (projectors) dialog"""
+    """Toggle options (projectors) dialog."""
     import matplotlib.pyplot as plt
     if len(params['projs']) > 0:
         if params['fig_proj'] is None:
@@ -238,7 +235,7 @@ def _toggle_options(event, params):
 
 
 def _toggle_proj(event, params):
-    """Operation to perform when proj boxes clicked"""
+    """Operation to perform when proj boxes clicked."""
     # read options if possible
     if 'proj_checks' in params:
         bools = [x[0].get_visible() for x in params['proj_checks'].lines]
@@ -352,8 +349,7 @@ def _get_help_text(params):
 
 
 def _prepare_trellis(n_cells, max_col):
-    """Aux function
-    """
+    """Aux function."""
     import matplotlib.pyplot as plt
     if n_cells == 1:
         nrow = ncol = 1
@@ -373,7 +369,7 @@ def _prepare_trellis(n_cells, max_col):
 
 
 def _draw_proj_checkbox(event, params, draw_current_state=True):
-    """Toggle options (projectors) dialog"""
+    """Toggle options (projectors) dialog."""
     from matplotlib import widgets
     projs = params['projs']
     # turn on options dialog
@@ -410,7 +406,7 @@ def _draw_proj_checkbox(event, params, draw_current_state=True):
 
 
 def _layout_figure(params):
-    """Function for setting figure layout. Shared with raw and epoch plots"""
+    """Function for setting figure layout. Shared with raw and epoch plots."""
     size = params['fig'].get_size_inches() * params['fig'].dpi
     scroll_width = 25
     hscroll_dist = 25
@@ -466,7 +462,7 @@ def _layout_figure(params):
 @verbose
 def compare_fiff(fname_1, fname_2, fname_out=None, show=True, indent='    ',
                  read_limit=np.inf, max_str=30, verbose=None):
-    """Compare the contents of two fiff files using diff and show_fiff
+    """Compare the contents of two fiff files using diff and show_fiff.
 
     Parameters
     ----------
@@ -488,7 +484,8 @@ def compare_fiff(fname_1, fname_2, fname_out=None, show=True, indent='    ',
         Max number of characters of string representation to print for
         each tag's data.
     verbose : bool, str, int, or None
-        If not None, override default verbose level (see mne.verbose).
+        If not None, override default verbose level (see :func:`mne.verbose`
+        and :ref:`Logging documentation <tut_logging>` for more).
 
     Returns
     -------
@@ -514,7 +511,7 @@ def compare_fiff(fname_1, fname_2, fname_out=None, show=True, indent='    ',
 
 
 def figure_nobar(*args, **kwargs):
-    """Make matplotlib figure with no toolbar"""
+    """Make matplotlib figure with no toolbar."""
     from matplotlib import rcParams, pyplot as plt
     old_val = rcParams['toolbar']
     try:
@@ -532,14 +529,14 @@ def figure_nobar(*args, **kwargs):
 
 
 def _helper_raw_resize(event, params):
-    """Helper for resizing"""
+    """Helper for resizing."""
     size = ','.join([str(s) for s in params['fig'].get_size_inches()])
     set_config('MNE_BROWSE_RAW_SIZE', size, set_env=False)
     _layout_figure(params)
 
 
 def _plot_raw_onscroll(event, params, len_channels=None):
-    """Interpret scroll events"""
+    """Interpret scroll events."""
     if 'fig_selection' in params:
         _change_channel_group(event.step, params)
         return
@@ -565,7 +562,7 @@ def _channels_changed(params, len_channels):
 
 
 def _plot_raw_time(value, params):
-    """Deal with changed time value"""
+    """Deal with changed time value."""
     info = params['info']
     max_times = params['n_times'] / float(info['sfreq']) - params['duration']
     if value > max_times:
@@ -586,7 +583,7 @@ def _radio_clicked(label, params):
     channels = params['selections'][label]
     ax_topo = params['fig_selection'].get_axes()[1]
     types = np.array([], dtype=int)
-    for this_type in ('mag', 'grad', 'eeg', 'seeg', 'ecog'):
+    for this_type in ('mag', 'grad', 'eeg', 'seeg', 'ecog', 'hbo', 'hbr'):
         if this_type in params['types']:
             types = np.concatenate(
                 [types, np.where(np.array(params['types']) == this_type)[0]])
@@ -651,7 +648,7 @@ def _handle_change_selection(event, params):
 
 
 def _plot_raw_onkey(event, params):
-    """Interpret key presses"""
+    """Interpret key presses."""
     import matplotlib.pyplot as plt
     if event.key == 'escape':
         plt.close(params['fig'])
@@ -720,7 +717,7 @@ def _plot_raw_onkey(event, params):
 
 
 def _mouse_click(event, params):
-    """Vertical select callback"""
+    """Vertical select callback."""
     if event.button != 1:
         return
     if event.inaxes is None:
@@ -752,8 +749,8 @@ def _mouse_click(event, params):
 
 
 def _handle_topomap_bads(ch_name, params):
-    """Helper for coloring channels in selection topomap when selecting bads"""
-    for type in ('mag', 'grad', 'eeg', 'seeg'):
+    """Color channels in selection topomap when selecting bads."""
+    for type in ('mag', 'grad', 'eeg', 'seeg', 'hbo', 'hbr'):
         if type in params['types']:
             types = np.where(np.array(params['types']) == type)[0]
             break
@@ -828,7 +825,7 @@ def _select_bads(event, params, bads):
 
 
 def _onclick_help(event, params):
-    """Function for drawing help window"""
+    """Function for drawing help window."""
     import matplotlib.pyplot as plt
     text, text2 = _get_help_text(params)
 
@@ -874,9 +871,7 @@ def _setup_browser_offsets(params, n_channels):
 
 
 class ClickableImage(object):
-
-    """
-    Display an image so you can click on it and store x/y positions.
+    """Display an image so you can click on it and store x/y positions.
 
     Takes as input an image array (can be any array that works with imshow,
     but will work best with images.  Displays the image and lets you
@@ -899,7 +894,7 @@ class ClickableImage(object):
 
     """
 
-    def __init__(self, imdata, **kwargs):
+    def __init__(self, imdata, **kwargs):  # noqa: D102
         """Display the image for clicking."""
         from matplotlib.pyplot import figure
         self.coords = []
@@ -1031,10 +1026,11 @@ def add_background_image(fig, im, set_ratios=None):
 
 
 def _find_peaks(evoked, npeaks):
-    """Helper function for finding peaks from evoked data
+    """Find peaks from evoked data.
+
     Returns ``npeaks`` biggest peaks as a list of time points.
     """
-    argrelmax = _get_argrelmax()
+    from scipy.signal import argrelmax
     gfp = evoked.data.std(axis=0)
     order = len(evoked.times) // 30
     if order < 1:
@@ -1050,7 +1046,7 @@ def _find_peaks(evoked, npeaks):
 
 
 def _process_times(inst, times, n_peaks=None, few=False):
-    """Helper to return a list of times for topomaps"""
+    """Helper to return a list of times for topomaps."""
     if isinstance(times, string_types):
         if times == "peaks":
             if n_peaks is None:
@@ -1333,9 +1329,9 @@ def _compute_scalings(scalings, inst):
     scalings : dict
         A scalings dictionary with updated values
     """
-    from ..io.base import _BaseRaw
-    from ..epochs import _BaseEpochs
-    if not isinstance(inst, (_BaseRaw, _BaseEpochs)):
+    from ..io.base import BaseRaw
+    from ..epochs import BaseEpochs
+    if not isinstance(inst, (BaseRaw, BaseEpochs)):
         raise ValueError('Must supply either Raw or Epochs')
     if scalings is None:
         # If scalings is None just return it and do nothing
@@ -1353,7 +1349,7 @@ def _compute_scalings(scalings, inst):
     scalings = deepcopy(scalings)
 
     if inst.preload is False:
-        if isinstance(inst, _BaseRaw):
+        if isinstance(inst, BaseRaw):
             # Load a window of data from the center up to 100mb in size
             n_times = 1e8 // (len(inst.ch_names) * 8)
             n_times = np.clip(n_times, 1, inst.n_times)
@@ -1362,7 +1358,7 @@ def _compute_scalings(scalings, inst):
             tmin = np.clip(time_middle - n_secs / 2., inst.times.min(), None)
             tmax = np.clip(time_middle + n_secs / 2., None, inst.times.max())
             data = inst._read_segment(tmin, tmax)
-        elif isinstance(inst, _BaseEpochs):
+        elif isinstance(inst, BaseEpochs):
             # Load a random subset of epochs up to 100mb in size
             n_epochs = 1e8 // (len(inst.ch_names) * len(inst.times) * 8)
             n_epochs = int(np.clip(n_epochs, 1, len(inst)))
@@ -1370,7 +1366,7 @@ def _compute_scalings(scalings, inst):
             inst = inst.copy()[ixs_epochs].load_data()
     else:
         data = inst._data
-    if isinstance(inst, _BaseEpochs):
+    if isinstance(inst, BaseEpochs):
         data = inst._data.reshape([len(inst.ch_names), -1])
     # Iterate through ch types and update scaling if ' auto'
     for key, value in scalings.items():
@@ -1385,11 +1381,24 @@ def _compute_scalings(scalings, inst):
     return scalings
 
 
+def _setup_cmap(cmap, n_axes=1, norm=False):
+    """Function for setting color map interactivity."""
+    if cmap == 'interactive':
+        cmap = ('Reds' if norm else 'RdBu_r', True)
+    elif not isinstance(cmap, tuple):
+        if cmap is None:
+            cmap = 'Reds' if norm else 'RdBu_r'
+        cmap = (cmap, False if n_axes > 2 else True)
+    return cmap
+
+
 class DraggableColorbar(object):
     """Class for enabling interactive colorbar.
+
     See http://www.ster.kuleuven.be/~pieterd/python/html/plotting/interactive_colorbar.html
-    """  # noqa
-    def __init__(self, cbar, mappable):
+    """  # noqa: E501
+
+    def __init__(self, cbar, mappable):  # noqa: D102
         import matplotlib.pyplot as plt
         self.cbar = cbar
         self.mappable = mappable
@@ -1502,7 +1511,8 @@ class SelectFromCollection(object):
         Defaults to 0.3.
     """
 
-    def __init__(self, ax, collection, ch_names, alpha_other=0.3):
+    def __init__(self, ax, collection, ch_names,
+                 alpha_other=0.3):  # noqa: D102
         import matplotlib as mpl
         if LooseVersion(mpl.__version__) < LooseVersion('1.2.1'):
             raise ImportError('Interactive selection not possible for '

@@ -13,9 +13,9 @@ from numpy.testing import (assert_array_equal, assert_equal,
 
 from mne import io, read_events, Epochs, pick_types
 from mne.decoding import Scaler, FilterEstimator
-from mne.decoding import (PSDEstimator, EpochsVectorizer, Vectorizer,
-                          UnsupervisedSpatialFilter)
-from mne.utils import requires_sklearn
+from mne.decoding import (PSDEstimator, Vectorizer,
+                          UnsupervisedSpatialFilter, TemporalFilter)
+from mne.utils import requires_sklearn_0_15, run_tests_if_main
 
 warnings.simplefilter('always')  # enable b/c these tests throw warnings
 
@@ -29,9 +29,8 @@ event_name = op.join(data_dir, 'test-eve.fif')
 
 
 def test_scaler():
-    """Test methods of Scaler
-    """
-    raw = io.read_raw_fif(raw_fname, preload=False)
+    """Test methods of Scaler."""
+    raw = io.read_raw_fif(raw_fname)
     events = read_events(event_name)
     picks = pick_types(raw.info, meg=True, stim=False, ecg=False,
                        eog=False, exclude='bads')
@@ -62,9 +61,8 @@ def test_scaler():
 
 
 def test_filterestimator():
-    """Test methods of FilterEstimator
-    """
-    raw = io.read_raw_fif(raw_fname, preload=False)
+    """Test methods of FilterEstimator."""
+    raw = io.read_raw_fif(raw_fname)
     events = read_events(event_name)
     picks = pick_types(raw.info, meg=True, stim=False, ecg=False,
                        eog=False, exclude='bads')
@@ -107,9 +105,8 @@ def test_filterestimator():
 
 
 def test_psdestimator():
-    """Test methods of PSDEstimator
-    """
-    raw = io.read_raw_fif(raw_fname, preload=False)
+    """Test methods of PSDEstimator."""
+    raw = io.read_raw_fif(raw_fname)
     events = read_events(event_name)
     picks = pick_types(raw.info, meg=True, stim=False, ecg=False,
                        eog=False, exclude='bads')
@@ -127,48 +124,6 @@ def test_psdestimator():
     # Test init exception
     assert_raises(ValueError, psd.fit, epochs, y)
     assert_raises(ValueError, psd.transform, epochs, y)
-
-
-def test_epochs_vectorizer():
-    """Test methods of EpochsVectorizer
-    """
-    raw = io.read_raw_fif(raw_fname, preload=False)
-    events = read_events(event_name)
-    picks = pick_types(raw.info, meg=True, stim=False, ecg=False,
-                       eog=False, exclude='bads')
-    picks = picks[1:13:3]
-    with warnings.catch_warnings(record=True):
-        epochs = Epochs(raw, events, event_id, tmin, tmax, picks=picks,
-                        baseline=(None, 0), preload=True)
-    epochs_data = epochs.get_data()
-    vector = EpochsVectorizer(epochs.info)
-    y = epochs.events[:, -1]
-    X = vector.fit_transform(epochs_data, y)
-
-    # Check data dimensions
-    assert_true(X.shape[0] == epochs_data.shape[0])
-    assert_true(X.shape[1] == epochs_data.shape[1] * epochs_data.shape[2])
-
-    assert_array_equal(vector.fit(epochs_data, y).transform(epochs_data), X)
-
-    # Check if data is preserved
-    n_times = epochs_data.shape[2]
-    assert_array_equal(epochs_data[0, 0, 0:n_times], X[0, 0:n_times])
-
-    # Check inverse transform
-    Xi = vector.inverse_transform(X, y)
-    assert_true(Xi.shape[0] == epochs_data.shape[0])
-    assert_true(Xi.shape[1] == epochs_data.shape[1])
-    assert_array_equal(epochs_data[0, 0, 0:n_times], Xi[0, 0, 0:n_times])
-
-    # check if inverse transform works with different number of epochs
-    Xi = vector.inverse_transform(epochs_data[0], y)
-    assert_true(Xi.shape[1] == epochs_data.shape[1])
-    assert_true(Xi.shape[2] == epochs_data.shape[2])
-
-    # Test init exception
-    assert_raises(ValueError, vector.fit, epochs, y)
-    assert_raises(ValueError, vector.transform, epochs, y)
 
 
 def test_vectorizer():
@@ -196,11 +151,12 @@ def test_vectorizer():
                   np.random.rand(102, 12, 12))
 
 
-@requires_sklearn
+@requires_sklearn_0_15
 def test_unsupervised_spatial_filter():
+    """Test unsupervised spatial filter."""
     from sklearn.decomposition import PCA
     from sklearn.kernel_ridge import KernelRidge
-    raw = io.read_raw_fif(raw_fname, preload=False)
+    raw = io.read_raw_fif(raw_fname)
     events = read_events(event_name)
     picks = pick_types(raw.info, meg=True, stim=False, ecg=False,
                        eog=False, exclude='bads')
@@ -229,3 +185,34 @@ def test_unsupervised_spatial_filter():
     usf = UnsupervisedSpatialFilter(PCA(4), average=True)
     usf.fit_transform(X)
     assert_raises(ValueError, UnsupervisedSpatialFilter, PCA(4), 2)
+
+
+def test_temporal_filter():
+    """Test methods of TemporalFilter."""
+    X = np.random.rand(5, 5, 1200)
+
+    # Test init test
+    values = (('10hz', None, 100., 'auto'), (5., '10hz', 100., 'auto'),
+              (10., 20., 5., 'auto'), (None, None, 100., '5hz'))
+    for low, high, sf, ltrans in values:
+        filt = TemporalFilter(low, high, sf, ltrans)
+        assert_raises(ValueError, filt.fit_transform, X)
+
+    # Add tests for different combinations of l_freq and h_freq
+    for low, high in ((5., 15.), (None, 15.), (5., None)):
+        filt = TemporalFilter(low, high, sfreq=100.)
+        Xt = filt.fit_transform(X)
+        assert_array_equal(filt.fit_transform(X), Xt)
+        assert_true(X.shape == Xt.shape)
+
+    # Test fit and transform numpy type check
+    with warnings.catch_warnings(record=True):
+        assert_raises(TypeError, filt.transform, [1, 2])
+
+    # Test with 2 dimensional data array
+    X = np.random.rand(101, 500)
+    filt = TemporalFilter(l_freq=25., h_freq=50., sfreq=1000.,
+                          filter_length=150)
+    assert_equal(filt.fit_transform(X).shape, X.shape)
+
+run_tests_if_main()

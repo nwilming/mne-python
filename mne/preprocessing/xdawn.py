@@ -11,8 +11,8 @@ from .ica import _get_fast_dot
 from .. import EvokedArray, Evoked
 from ..cov import Covariance, _regularized_covariance
 from ..decoding import TransformerMixin, BaseEstimator
-from ..epochs import _BaseEpochs, EpochsArray
-from ..io import _BaseRaw
+from ..epochs import BaseEpochs, EpochsArray
+from ..io import BaseRaw
 from ..io.pick import _pick_data_channels
 from ..utils import logger
 from ..externals.six import iteritems, itervalues
@@ -61,7 +61,6 @@ def _least_square_evoked(epochs_data, events, tmin, sfreq):
     toeplitz : array, shape (n_class * n_components, n_channels)
         An concatenated array of toeplitz matrix for each event type.
     """
-
     n_epochs, n_channels, n_times = epochs_data.shape
     tmax = tmin + n_times / float(sfreq)
 
@@ -207,7 +206,7 @@ def _fit_xdawn(epochs_data, y, n_components, reg=None, signal_cov=None,
     return filters, patterns, evokeds
 
 
-class XdawnTransformer(BaseEstimator, TransformerMixin):
+class _XdawnTransformer(BaseEstimator, TransformerMixin):
     """Implementation of the Xdawn Algorithm compatible with scikit-learn.
 
     Xdawn is a spatial filtering method designed to improve the signal
@@ -216,7 +215,7 @@ class XdawnTransformer(BaseEstimator, TransformerMixin):
     response with respect to the non-target response. This implementation is a
     generalization to any type of event related response.
 
-    .. note:: XdawnTransformer does not correct for epochs overlap. To correct
+    .. note:: _XdawnTransformer does not correct for epochs overlap. To correct
               overlaps see ``Xdawn``.
 
     Parameters
@@ -356,7 +355,7 @@ class XdawnTransformer(BaseEstimator, TransformerMixin):
         return X, y
 
 
-class Xdawn(XdawnTransformer):
+class Xdawn(_XdawnTransformer):
     """Implementation of the Xdawn Algorithm.
 
     Xdawn is a spatial filtering method designed to improve the signal
@@ -404,7 +403,6 @@ class Xdawn(XdawnTransformer):
     See Also
     --------
     CSP
-    XdawnTransformer
 
     References
     ----------
@@ -417,6 +415,7 @@ class Xdawn(XdawnTransformer):
     efficient sensor selection in a P300 BCI. In Signal Processing Conference,
     2011 19th European (pp. 1382-1386). IEEE.
     """
+
     def __init__(self, n_components=2, signal_cov=None, correct_overlap='auto',
                  reg=None):
         """Init."""
@@ -442,7 +441,7 @@ class Xdawn(XdawnTransformer):
             The Xdawn instance.
         """
         # Check data
-        if not isinstance(epochs, _BaseEpochs):
+        if not isinstance(epochs, BaseEpochs):
             raise ValueError('epochs must be an Epochs object.')
         X = epochs.get_data()
         X = X[:, _pick_data_channels(epochs.info), :]
@@ -506,7 +505,7 @@ class Xdawn(XdawnTransformer):
         X : ndarray, shape (n_epochs, n_components * n_event_types, n_times)
             Spatially filtered signals.
         """
-        if isinstance(epochs, _BaseEpochs):
+        if isinstance(epochs, BaseEpochs):
             X = epochs.get_data()
         elif isinstance(epochs, np.ndarray):
             X = epochs
@@ -552,7 +551,7 @@ class Xdawn(XdawnTransformer):
         if event_id is None:
             event_id = self.event_id_
 
-        if not isinstance(inst, (_BaseRaw, _BaseEpochs, Evoked)):
+        if not isinstance(inst, (BaseRaw, BaseEpochs, Evoked)):
             raise ValueError('Data input must be Raw, Epochs or Evoked type')
         picks = _pick_data_channels(inst.info)
 
@@ -563,10 +562,10 @@ class Xdawn(XdawnTransformer):
         else:
             exclude = list(set(list(default_exclude) + list(exclude)))
 
-        if isinstance(inst, _BaseRaw):
+        if isinstance(inst, BaseRaw):
             out = self._apply_raw(raw=inst, include=include, exclude=exclude,
                                   event_id=event_id, picks=picks)
-        elif isinstance(inst, _BaseEpochs):
+        elif isinstance(inst, BaseEpochs):
             out = self._apply_epochs(epochs=inst, include=include, picks=picks,
                                      exclude=exclude, event_id=event_id)
         elif isinstance(inst, Evoked):
@@ -652,7 +651,6 @@ class Xdawn(XdawnTransformer):
         return data
 
     def inverse_transform(self):
-        """Not implemented, see Xdawn.apply() instead.
-        """
-        # Exists because of XdawnTransformer
+        """Not implemented, see Xdawn.apply() instead."""
+        # Exists because of _XdawnTransformer
         raise NotImplementedError('See Xdawn.apply()')

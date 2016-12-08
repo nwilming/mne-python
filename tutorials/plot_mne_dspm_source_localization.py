@@ -23,6 +23,7 @@ data_path = sample.data_path()
 raw_fname = data_path + '/MEG/sample/sample_audvis_filt-0-40_raw.fif'
 
 raw = mne.io.read_raw_fif(raw_fname)
+raw.set_eeg_reference()  # set EEG average reference
 events = mne.find_events(raw, stim_channel='STI 014')
 
 event_id = dict(aud_r=1)  # event trigger and conditions
@@ -34,8 +35,8 @@ picks = mne.pick_types(raw.info, meg=True, eeg=False, eog=True,
 baseline = (None, 0)  # means from the first instant to t = 0
 reject = dict(grad=4000e-13, mag=4e-12, eog=150e-6)
 
-epochs = mne.Epochs(raw, events, event_id, tmin, tmax, proj=True,
-                    picks=picks, baseline=baseline, reject=reject)
+epochs = mne.Epochs(raw, events, event_id, tmin, tmax, proj=True, picks=picks,
+                    baseline=baseline, reject=reject)
 
 ###############################################################################
 # Compute regularized noise covariance
@@ -121,7 +122,8 @@ brain.show_view('lateral')
 
 fs_vertices = [np.arange(10242)] * 2
 morph_mat = mne.compute_morph_matrix('sample', 'fsaverage', stc.vertices,
-                                     fs_vertices, smooth=None)
+                                     fs_vertices, smooth=None,
+                                     subjects_dir=subjects_dir)
 stc_fsaverage = stc.morph_precomputed('fsaverage', fs_vertices, morph_mat)
 brain_fsaverage = stc_fsaverage.plot(surface='inflated', hemi='rh',
                                      subjects_dir=subjects_dir,

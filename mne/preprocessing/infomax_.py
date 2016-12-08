@@ -22,7 +22,7 @@ def infomax(data, weights=None, l_rate=None, block=None, w_change=1e-12,
     Parameters
     ----------
     data : np.ndarray, shape (n_samples, n_features)
-        The data to unmix.
+        The whitened data to unmix.
     weights : np.ndarray, shape (n_features, n_features)
         The initialized unmixing matrix.
         Defaults to None, which means the identity matrix is used.
@@ -85,7 +85,8 @@ def infomax(data, weights=None, l_rate=None, block=None, w_change=1e-12,
         This quantity indicates if the bias should be computed.
         Defaults to True.
     verbose : bool, str, int, or None
-        If not None, override default verbosity level (see mne.verbose).
+        If not None, override default verbosity level (see :func:`mne.verbose`
+        and :ref:`Logging documentation <tut_logging>` for more).
 
     Returns
     -------
@@ -137,6 +138,8 @@ def infomax(data, weights=None, l_rate=None, block=None, w_change=1e-12,
     # initialize training
     if weights is None:
         weights = np.identity(n_features, dtype=np.float64)
+    else:
+        weights = weights.T
 
     BI = block * np.identity(n_features, dtype=np.float64)
     bias = np.zeros((n_features, 1), dtype=np.float64)

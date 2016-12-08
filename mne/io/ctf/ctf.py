@@ -1,5 +1,4 @@
-"""Conversion tool from CTF to FIF
-"""
+"""Conversion tool from CTF to FIF."""
 
 # Author: Eric Larson <larson.eric.d<gmail.com>
 #
@@ -13,7 +12,7 @@ import numpy as np
 from ...utils import verbose, logger
 from ...externals.six import string_types
 
-from ..base import _BaseRaw
+from ..base import BaseRaw
 from ..utils import _mult_cal_one, _blk_read_lims
 
 from .res4 import _read_res4, _make_ctf_name
@@ -26,7 +25,7 @@ from .constants import CTF
 
 def read_raw_ctf(directory, system_clock='truncate', preload=False,
                  verbose=None):
-    """Raw object from CTF directory
+    """Raw object from CTF directory.
 
     Parameters
     ----------
@@ -44,7 +43,8 @@ def read_raw_ctf(directory, system_clock='truncate', preload=False,
         file name of a memory-mapped file which is used to store the data
         on the hard drive (slower, requires less memory).
     verbose : bool, str, int, or None
-        If not None, override default verbose level (see mne.verbose).
+        If not None, override default verbose level (see :func:`mne.verbose`
+        and :ref:`Logging documentation <tut_logging>` for more).
 
     Returns
     -------
@@ -62,8 +62,8 @@ def read_raw_ctf(directory, system_clock='truncate', preload=False,
     return RawCTF(directory, system_clock, preload=preload, verbose=verbose)
 
 
-class RawCTF(_BaseRaw):
-    """Raw object from CTF directory
+class RawCTF(BaseRaw):
+    """Raw object from CTF directory.
 
     Parameters
     ----------
@@ -81,15 +81,17 @@ class RawCTF(_BaseRaw):
         file name of a memory-mapped file which is used to store the data
         on the hard drive (slower, requires less memory).
     verbose : bool, str, int, or None
-        If not None, override default verbose level (see mne.verbose).
+        If not None, override default verbose level (see :func:`mne.verbose`
+        and :ref:`Logging documentation <tut_logging>` for more).
 
     See Also
     --------
     mne.io.Raw : Documentation of attribute and methods.
     """
+
     @verbose
     def __init__(self, directory, system_clock='truncate', preload=False,
-                 verbose=None):
+                 verbose=None):  # noqa: D102
         # adapted from mne_ctf2fiff.c
         if not isinstance(directory, string_types) or \
                 not directory.endswith('.ds'):
@@ -141,7 +143,7 @@ class RawCTF(_BaseRaw):
 
     @verbose
     def _read_segment_file(self, data, idx, fi, start, stop, cals, mult):
-        """Read a chunk of raw data"""
+        """Read a chunk of raw data."""
         si = self._raw_extras[fi]
         offset = 0
         trial_start_idx, r_lims, d_lims = _blk_read_lims(start, stop,
@@ -164,7 +166,7 @@ class RawCTF(_BaseRaw):
 
 
 def _get_sample_info(fname, res4, system_clock):
-    """Helper to determine the number of valid samples"""
+    """Helper to determine the number of valid samples."""
     logger.info('Finding samples for %s: ' % (fname,))
     if CTF.SYSTEM_CLOCK_CH in res4['ch_names']:
         clock_ch = res4['ch_names'].index(CTF.SYSTEM_CLOCK_CH)

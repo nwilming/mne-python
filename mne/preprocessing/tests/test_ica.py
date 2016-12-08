@@ -22,7 +22,7 @@ from mne.preprocessing import (ICA, ica_find_ecg_events, ica_find_eog_events,
                                read_ica, run_ica)
 from mne.preprocessing.ica import (get_score_funcs, corrmap, _get_ica_map,
                                    _ica_explained_variance, _sort_components)
-from mne.io import Raw, Info, RawArray
+from mne.io import read_raw_fif, Info, RawArray
 from mne.io.meas_info import _kind_dict
 from mne.io.pick import _DATA_CH_TYPES_SPLIT
 from mne.tests.common import assert_naming
@@ -32,7 +32,6 @@ from mne.utils import (catch_logging, _TempDir, requires_sklearn, slow_test,
 # Set our plotters to test mode
 import matplotlib
 matplotlib.use('Agg')  # for testing don't use X server
-import matplotlib.pyplot as plt  # noqa
 
 warnings.simplefilter('always')  # enable b/c these tests throw warnings
 
@@ -54,10 +53,9 @@ except:
 
 @requires_sklearn
 def test_ica_full_data_recovery():
-    """Test recovery of full data when no source is rejected"""
+    """Test recovery of full data when no source is rejected."""
     # Most basic recovery
-    raw = Raw(raw_fname).crop(0.5, stop, copy=False)
-    raw.load_data()
+    raw = read_raw_fif(raw_fname).crop(0.5, stop).load_data()
     events = read_events(event_name)
     picks = pick_types(raw.info, meg=True, stim=False, ecg=False,
                        eog=False, exclude='bads')[:10]
@@ -113,10 +111,9 @@ def test_ica_full_data_recovery():
 
 @requires_sklearn
 def test_ica_rank_reduction():
-    """Test recovery ICA rank reduction"""
+    """Test recovery ICA rank reduction."""
     # Most basic recovery
-    raw = Raw(raw_fname).crop(0.5, stop, copy=False)
-    raw.load_data()
+    raw = read_raw_fif(raw_fname).crop(0.5, stop).load_data()
     picks = pick_types(raw.info, meg=True, stim=False, ecg=False,
                        eog=False, exclude='bads')[:10]
     n_components = 5
@@ -142,9 +139,8 @@ def test_ica_rank_reduction():
 
 @requires_sklearn
 def test_ica_reset():
-    """Test ICA resetting"""
-    raw = Raw(raw_fname).crop(0.5, stop, copy=False)
-    raw.load_data()
+    """Test ICA resetting."""
+    raw = read_raw_fif(raw_fname).crop(0.5, stop).load_data()
     picks = pick_types(raw.info, meg=True, stim=False, ecg=False,
                        eog=False, exclude='bads')[:10]
 
@@ -170,9 +166,8 @@ def test_ica_reset():
 
 @requires_sklearn
 def test_ica_core():
-    """Test ICA on raw and epochs"""
-    raw = Raw(raw_fname).crop(1.5, stop, copy=False)
-    raw.load_data()
+    """Test ICA on raw and epochs."""
+    raw = read_raw_fif(raw_fname).crop(1.5, stop).load_data()
     picks = pick_types(raw.info, meg=True, stim=False, ecg=False,
                        eog=False, exclude='bads')
     # XXX. The None cases helped revealing bugs but are time consuming.
@@ -221,7 +216,12 @@ def test_ica_core():
             ica.fit(raw, picks=pcks, start=start, stop=stop)
         assert_array_almost_equal(unmixing1, ica.unmixing_matrix_)
 
-        sources = ica.get_sources(raw)[:, :][0]
+        raw_sources = ica.get_sources(raw)
+        # test for #3804
+        assert_equal(raw_sources._filenames, [None])
+        print(raw_sources)
+
+        sources = raw_sources[:, :][0]
         assert_true(sources.shape[0] == ica.n_components_)
 
         # test preload filter
@@ -273,11 +273,11 @@ def test_ica_core():
 @slow_test
 @requires_sklearn
 def test_ica_additional():
-    """Test additional ICA functionality"""
+    """Test additional ICA functionality."""
+    import matplotlib.pyplot as plt
     tempdir = _TempDir()
     stop2 = 500
-    raw = Raw(raw_fname).crop(1.5, stop, copy=False)
-    raw.load_data()
+    raw = read_raw_fif(raw_fname).crop(1.5, stop).load_data()
     # XXX This breaks the tests :(
     # raw.info['bads'] = [raw.ch_names[1]]
     test_cov = read_cov(test_cov_name)
@@ -531,13 +531,13 @@ def test_ica_additional():
     # Test ica fiff export
     ica_raw = ica.get_sources(raw, start=0, stop=100)
     assert_true(ica_raw.last_samp - ica_raw.first_samp == 100)
-    assert_true(len(ica_raw._filenames) == 0)  # API consistency
+    assert_equal(len(ica_raw._filenames), 1)  # API consistency
     ica_chans = [ch for ch in ica_raw.ch_names if 'ICA' in ch]
     assert_true(ica.n_components_ == len(ica_chans))
     test_ica_fname = op.join(op.abspath(op.curdir), 'test-ica_raw.fif')
     ica.n_components = np.int32(ica.n_components)
     ica_raw.save(test_ica_fname, overwrite=True)
-    ica_raw2 = Raw(test_ica_fname, preload=True)
+    ica_raw2 = read_raw_fif(test_ica_fname, preload=True)
     assert_allclose(ica_raw._data, ica_raw2._data, rtol=1e-5, atol=1e-4)
     ica_raw2.close()
     os.remove(test_ica_fname)
@@ -561,8 +561,8 @@ def test_ica_additional():
 
 @requires_sklearn
 def test_run_ica():
-    """Test run_ica function"""
-    raw = Raw(raw_fname, preload=True).crop(1.5, stop, copy=False)
+    """Test run_ica function."""
+    raw = read_raw_fif(raw_fname).crop(1.5, stop).load_data()
     params = []
     params += [(None, -1, slice(2), [0, 1])]  # varicance, kurtosis idx
     params += [(None, 'MEG 1531')]  # ECG / EOG channel params
@@ -576,9 +576,8 @@ def test_run_ica():
 
 @requires_sklearn
 def test_ica_reject_buffer():
-    """Test ICA data raw buffer rejection"""
-    raw = Raw(raw_fname).crop(1.5, stop, copy=False)
-    raw.load_data()
+    """Test ICA data raw buffer rejection."""
+    raw = read_raw_fif(raw_fname).crop(1.5, stop).load_data()
     picks = pick_types(raw.info, meg=True, stim=False, ecg=False,
                        eog=False, exclude='bads')
     ica = ICA(n_components=3, max_pca_components=4, n_pca_components=4)
@@ -594,9 +593,8 @@ def test_ica_reject_buffer():
 
 @requires_sklearn
 def test_ica_twice():
-    """Test running ICA twice"""
-    raw = Raw(raw_fname).crop(1.5, stop, copy=False)
-    raw.load_data()
+    """Test running ICA twice."""
+    raw = read_raw_fif(raw_fname).crop(1.5, stop).load_data()
     picks = pick_types(raw.info, meg='grad', exclude='bads')
     n_components = 0.9
     max_pca_components = None
@@ -617,7 +615,7 @@ def test_ica_twice():
 
 @requires_sklearn
 def test_fit_params():
-    """Test fit_params for ICA"""
+    """Test fit_params for ICA."""
     assert_raises(ValueError, ICA, fit_params=dict(extended=True))
     fit_params = {}
     ICA(fit_params=fit_params)  # test no side effects
@@ -626,8 +624,7 @@ def test_fit_params():
 
 @requires_sklearn
 def test_bad_channels():
-    """Test if exception is raised when unsupported channels are used.
-    Test for raw and evoked data"""
+    """Test exception when unsupported channels are used."""
     chs = [i for i in _kind_dict]
     data_chs = _DATA_CH_TYPES_SPLIT + ['eog']
     chs_bad = list(set(chs) - set(data_chs))
@@ -655,8 +652,8 @@ def test_bad_channels():
 
 @requires_sklearn
 def test_eog_channel():
-    """Test that EOG channel is included when performing ICA"""
-    raw = Raw(raw_fname, preload=True)
+    """Test that EOG channel is included when performing ICA."""
+    raw = read_raw_fif(raw_fname, preload=True)
     events = read_events(event_name)
     picks = pick_types(raw.info, meg=True, stim=True, ecg=False,
                        eog=True, exclude='bads')
@@ -676,7 +673,7 @@ def test_eog_channel():
     # Test case for MEG data. Should have no EOG channel
     for inst in [raw, epochs]:
         picks1 = pick_types(inst.info, meg=True, stim=False, ecg=False,
-                            eog=False, exclude='bads')[:4]
+                            eog=False, exclude='bads')[:5]
         ica.fit(inst, picks=picks1)
         assert_false(any('EOG' in ch for ch in ica.ch_names))
 
