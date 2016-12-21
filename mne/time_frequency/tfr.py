@@ -969,7 +969,7 @@ class AverageTFR(_BaseTFR):
         fig : matplotlib.figure.Figure
             The figure containing the topography.
         """  # noqa: E501
-        from ..viz.topo import _imshow_tfr
+        from ..viz.topo import _imshow_tfr, _pcolormesh_tfr
         import matplotlib.pyplot as plt
         times, freqs = self.times.copy(), self.freqs.copy()
         info = self.info
@@ -1001,10 +1001,15 @@ class AverageTFR(_BaseTFR):
                 fig = ax.get_figure()
             onselect_callback = partial(self._onselect, baseline=baseline,
                                         mode=mode, layout=layout)
-            _imshow_tfr(ax, 0, tmin, tmax, vmin, vmax, onselect_callback,
-                        ylim=None, tfr=data[idx: idx + 1], freq=freqs,
-                        x_label='Time (ms)', y_label='Frequency (Hz)',
-                        colorbar=colorbar, picker=False, cmap=cmap)
+            #_imshow_tfr(ax, 0, tmin, tmax, vmin, vmax, onselect_callback,
+            #            ylim=None, tfr=data[idx: idx + 1], freq=freqs,
+            #            x_label='Time (ms)', y_label='Frequency (Hz)',
+            #            colorbar=colorbar, picker=False, cmap=cmap)
+            _pcolormesh_tfr(ax, 0,  vmin, vmax, onselect_callback,
+                    ylim=None, tfr=data[idx:idx+1], times=times, freq=freqs,
+                    x_label='Time (ms)', y_label='Frequency (Hz)',
+                    colorbar=colorbar, picker=False, cmap=cmap)
+
             if title:
                 fig.suptitle(title)
 
